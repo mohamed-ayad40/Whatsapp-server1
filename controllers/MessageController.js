@@ -1,5 +1,6 @@
 import getPrismaInstance from "../utils/PrismaClient.js";
 import {renameSync} from "fs";
+import {v2 as cloudinary} from "cloudinary";
 
 // export const addMessage = async (req, res, next) => {
 //     try {
@@ -183,15 +184,17 @@ export const addImageMessage = async (req, res, next) => {
             const date = Date.now();
             console.log(date);
             console.log(req.file.path);
-            let fileName = "uploads/images/" + date + req.file.originalname;
-            console.log(fileName);
-            renameSync(req.file.path, fileName);
+            const imageFile = req.file;
+            const imageUpload = await cloudinary.uploader.upload(imageFile.path, {resource_type: "image"});
+            // let fileName = "uploads/images/" + date + req.file.originalname;
+            // console.log(fileName);
+            // renameSync(req.file.path, fileName);
             const prisma = getPrismaInstance();
             const {from, to} = req.query;
             if(from && to) {
                 const message = await prisma.messages.create({
                     data: {
-                        message: fileName,
+                        message: imageUpload.secure_url,
                         sender: {connect: {id: from}}, /// or remove the parseInt
                         receiver: {connect: {id: to}},
                         type: "image"
@@ -214,17 +217,19 @@ export const addAudioMessage = async (req, res, next) => {
     try {
         if(req.file) {
             const date = Date.now();
-            console.log(date);
-            console.log(req.file.path);
-            let fileName = "uploads/recordings/" + date + req.file.originalname;
-            console.log(fileName);
-            renameSync(req.file.path, fileName);
+            // console.log(date);
+            // console.log(req.file.path);
+            // let fileName = "uploads/recordings/" + date + req.file.originalname;
+            // console.log(fileName);
+            // renameSync(req.file.path, fileName);
+            const audioFile = req.file;
+            const audioUpload = await cloudinary.uploader.upload(audioFile.path, {resource_type: "video"});
             const prisma = getPrismaInstance();
             const {from, to} = req.query;
             if(from && to) {
                 const message = await prisma.messages.create({
                     data: {
-                        message: fileName,
+                        message: audioUpload.secure_url,
                         sender: {connect: {id: from}}, /// or remove the parseInt
                         receiver: {connect: {id: to}},
                         type: "audio"
