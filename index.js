@@ -35,7 +35,7 @@ const io = new Server(server, {
         // credentials: true, // Allow cookies and credentials
         methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
         // preflightContinue: true,
-        allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headersrs: "Content-Type, Authorization, Accept", // Allow necessary headers
+        // allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headersrs: "Content-Type, Authorization, Accept", // Allow necessary headers
     }
 });
 
