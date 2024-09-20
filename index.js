@@ -12,10 +12,10 @@ const app = express();
 
 app.use(cors({
     origin: "https://whatsapp-client-delta.vercel.app", // Allow requests from your client
-    credentials: false, // Allow cookies and credentials
+    // credentials: false, // Allow cookies and credentials
     methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
     // preflightContinue: true,
-    allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headers
+    // allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headers
 }));
 app.use(express.json());
 app.use("/uploads/recordings", express.static("uploads/recordings"))
