@@ -36,7 +36,7 @@ const io = new Server(server, {
         methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
         // preflightContinue: true,
         // allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headersrs: "Content-Type, Authorization, Accept", // Allow necessary headers
-    },transports: ['websocket', 'polling']
+    },transports: ['websocket'],
 });
 
 
