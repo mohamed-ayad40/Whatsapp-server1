@@ -12,7 +12,7 @@ const app = express();
 
 app.use(cors({
     origin: "https://whatsapp-client-delta.vercel.app", // Allow requests from your client
-    credentials: true, // Allow cookies and credentials
+    // credentials: true, // Allow cookies and credentials
     methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
     // preflightContinue: true,
     allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headers
@@ -32,7 +32,7 @@ const server = app.listen(process.env.PORT, () => {
 const io = new Server(server, {
     cors: {
         origin: "https://whatsapp-client-delta.vercel.app", // Allow requests from your client
-        credentials: true, // Allow cookies and credentials
+        // credentials: true, // Allow cookies and credentials
         methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
         // preflightContinue: true,
         allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headersrs: "Content-Type, Authorization, Accept", // Allow necessary headers
