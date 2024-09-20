@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { addAudioMessage, addImageMessage, addMessage, getInitialContactsWithMessages, getMessages } from "../controllers/MessageController.js";
 // import multer from "multer";
-import upload from "../middleware/multer.js";
+import upload from "../middlewares/multer.js";
 const router = Router();
 
 // const upload = multer({dest: "uploads/recordings"})
