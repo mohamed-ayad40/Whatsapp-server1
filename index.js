@@ -22,6 +22,9 @@ app.use("/uploads/recordings", express.static("uploads/recordings"))
 app.use("/uploads/images", express.static("uploads/images"))
 app.use("/api/auth", AuthRoutes)
 app.use("/api/messages", MessageRoute)
+app.get("/", (req, res) => {
+    res.send("Hello client");
+})
 const server = app.listen(process.env.PORT, () => {
     console.log("Server Started on port 4000!");
 });
