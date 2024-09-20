@@ -38,6 +38,7 @@ const io = new Server(server, {
         // allowedHeaders: "Content-Type, Authorization, Accept", // Allow necessary headersrs: "Content-Type, Authorization, Accept", // Allow necessary headers
     },transports: ['websocket', 'polling'],
     path: '/socket.io',
+    addTrailingSlash: false,
 });
 
 
