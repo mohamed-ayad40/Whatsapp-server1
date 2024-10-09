@@ -25,7 +25,7 @@ app.use("/api/messages", MessageRoute)
 app.get("/", (req, res) => {
     res.send("Hello client");
 })
-const server = app.listen(process.env.PORT, () => {
+const server = app.listen(120 || process.env.PORT, () => {
     console.log("Server Started on port 4000!");
 });
 
