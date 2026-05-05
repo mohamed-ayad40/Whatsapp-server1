@@ -6,10 +6,14 @@ import MessageRoute from "./routes/MessageRoutes.js";
 import { Server } from "socket.io";
 import { getMessages } from "./controllers/MessageController.js";
 import connectCloudinary from "./config/cloudinary.js";
-connectCloudinary();
+import getPrismaInstance from "./utils/PrismaClient.js";
+import helmet from "helmet"; // ضيف ده مع الـ imports فوق
+
 dotenv.config();
 const app = express();
+app.use(helmet()); // ضيف السطر ده هنا تحت تعريف الـ app مباشرة
 
+connectCloudinary();
 app.use(cors({
     origin: ["https://whatsapp-client-delta.vercel.app", "http://localhost:3000"], // Allow requests from your client
     credentials: true, // Allow cookies and credentials
@@ -71,25 +75,63 @@ io.on("connection", (socket) => {
         socket.broadcast.to(chatId).emit("user-left", { userId });
     });
 
-    socket.on("msg-seen", (data) => {
+    socket.on("msg-seen", async (data) => {
         const sendUserSocket = onlineUsers.get(data.to);
-        socket.to(sendUserSocket).emit("refresh-seen", {
-            to: data.to
-        })
+        if (sendUserSocket) {
+            global.io.to(sendUserSocket).emit("refresh-seen", {
+                readerId: data.from 
+            });
+        }
+
+        // --- التعديل الجديد: تحديث الداتا بيز عشان الـ Seen يفضل محفوظ بعد الريفريش ---
+        try {
+            const prisma = getPrismaInstance();
+            await prisma.messages.updateMany({
+                where: {
+                    senderId: data.to,     // الشخص اللي بعت الرسالة
+                    receiverId: data.from, // أنت (اللي قرأ الرسالة)
+                    messageStatus: { in: ["sent", "delivered"] },
+                },
+                data: { messageStatus: "read" },
+            });
+        } catch (error) {
+            console.log("Error updating message status on seen:", error);
+        }
+        // -------------------------------------------------------------
     });
 
-    socket.on('disconnect', function(data) {
+    // خلينا الـ function دي async عشان نقدر نكلم الداتا بيز
+    socket.on('disconnect', async function(data) {
         for (let [userId, sockId] of onlineUsers.entries()) {
             if (sockId === socket.id) {
-                // Remove the user from the map
                 onlineUsers.delete(userId);
-                break; // Exit the loop once the user is found
+                
+                // --- السحر هنا: نسجل وقت الخروج في الداتا بيز ونبلّغ الناس ---
+                try {
+                    const prisma = getPrismaInstance();
+                    const currentTime = new Date();
+                    
+                    // تحديث وقت اليوزر في الداتا بيز
+                    await prisma.user.update({
+                        where: { id: userId },
+                        data: { lastSeen: currentTime }
+                    });
+                    
+                    // نبعت للناس اللي فاتحين الأبلكيشن إن اليوزر ده قفل وادي آخر ظهور ليه
+                    socket.broadcast.emit("user-offline", { 
+                        userId: userId, 
+                        lastSeen: currentTime 
+                    });
+                } catch (error) {
+                    console.log("Error updating last seen:", error);
+                }
+                // -------------------------------------------------------------
+                break;
             }
         }
-        console.log("Online users");
         socket.broadcast.emit("online-users", {
             onlineUsers: Array.from(onlineUsers.keys())
-        })
+        });
     });
 
     socket.on("signout", (id) => {
