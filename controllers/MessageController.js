@@ -7,7 +7,7 @@ export const addMessage = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
         // غيرنا const لـ let عشان نقدر نعدل على الرسالة
-        let { message, from, to } = req.body;
+        let { message, from, to, replyTo } = req.body;
 
         if (message && from && to) {
             
@@ -33,10 +33,12 @@ export const addMessage = async (req, res, next) => {
                     senderId: from,
                     receiverId: to,
                     messageStatus: getUser ? "delivered" : "sent",
+                    replyToId: replyTo || null,
                 },
                 include: {
                     sender: true,
                     receiver: true,
+                    replyTo: true,
                 }
             });
 
@@ -83,6 +85,7 @@ export const getMessages = async (req, res, next) => {
                     { senderId: to, receiverId: from },
                 ],
             },
+            include: { replyTo: true },
             orderBy: {
                 id: 'desc', 
             },
