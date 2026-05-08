@@ -17,31 +17,56 @@ model User {
   sentMessages Messages[] @relation("sentMessages")
   receivedMessages Messages[] @relation("receivedMessages")
   lastSeen DateTime? @default(now()) 
+  
+  // --- الإضافة الجديدة: الجروبات اللي اليوزر مشترك فيها ---
+  groupIds String[] @db.ObjectId
+  groups Group[] @relation(fields: [groupIds], references: [id])
+}
+
+// --- الموديل الجديد للجروبات ---
+model Group {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+  profilePicture String @default("")
+  about String @default("")
+  adminIds String[] @db.ObjectId // IDs للـ Admins عشان الصلاحيات
+  
+  // علاقة الـ Many-to-Many في MongoDB Prisma
+  userIds String[] @db.ObjectId
+  users User[] @relation(fields: [userIds], references: [id])
+  
+  messages Messages[]
+  createdAt DateTime @default(now())
 }
 
 model Messages {
   id String @id @default(auto()) @map("_id") @db.ObjectId
   sender User @relation("sentMessages", fields: [senderId], references: [id])
   senderId String @db.ObjectId
-  receiver User @relation("receivedMessages", fields: [receiverId], references: [id])
-  receiverId String @db.ObjectId
+  
+  // تعديل خطير: خلينا الـ receiver اختياري (علامة الاستفهام)
+  receiver User? @relation("receivedMessages", fields: [receiverId], references: [id])
+  receiverId String? @db.ObjectId
+
+  // --- الإضافة الجديدة: ربط الرسالة بالجروب ---
+  groupId String? @db.ObjectId
+  group Group? @relation(fields: [groupId], references: [id])
+
   type String @default("text")
   message String
   messageStatus String @default("sent")
   createdAt DateTime @default(now())
 
-  // --- الحقول الجديدة للمرحلة الأولى ---
   isEdited Boolean @default(false)
   isDeleted Boolean @default(false)
-  deletedBy String[] @db.ObjectId // Array بيشيل الـ IDs للناس اللي مسحوها من عندهم
+  deletedBy String[] @db.ObjectId 
   
-  // الريبلاي (علاقة الرسالة بنفسها)
   replyToId String? @db.ObjectId
   replyTo Messages? @relation("ReplyRelation", fields: [replyToId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   replies Messages[] @relation("ReplyRelation")
-  // ------------------------------------
 
   @@index([senderId])
   @@index([receiverId])
+  @@index([groupId]) // مهم جداً عشان الـ Performance واحنا بنجيب رسايل الجروب
   @@index([createdAt])
 }

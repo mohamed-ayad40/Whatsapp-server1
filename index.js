@@ -8,6 +8,7 @@ import { getMessages } from "./controllers/MessageController.js";
 import connectCloudinary from "./config/cloudinary.js";
 import getPrismaInstance from "./utils/PrismaClient.js";
 import helmet from "helmet"; // ضيف ده مع الـ imports فوق
+import GroupRoutes from "./routes/GroupRoutes.js";
 
 dotenv.config();
 const app = express();
@@ -25,8 +26,9 @@ app.use(cors({
 app.use(express.json());
 // app.use("/uploads/recordings", express.static("uploads/recordings"))
 // app.use("/uploads/images", express.static("uploads/images"))
-app.use("/api/auth", AuthRoutes)
-app.use("/api/messages", MessageRoute)
+app.use("/api/auth", AuthRoutes);
+app.use("/api/messages", MessageRoute);
+app.use("/api/groups", GroupRoutes);
 app.get("/", (req, res) => {
     res.send("Hello client");
 })

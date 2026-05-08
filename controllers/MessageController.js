@@ -6,63 +6,75 @@ import sanitizeHtml from "sanitize-html";
 export const addMessage = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
-        // غيرنا const لـ let عشان نقدر نعدل على الرسالة
-        let { message, from, to, replyTo } = req.body;
+        // زودنا groupId هنا
+        let { message, from, to, replyTo, groupId } = req.body;
 
-        if (message && from && to) {
+        // ضفنا شرط إن يكون فيه يا to يا groupId
+        if (message && from && (to || groupId)) {
             
             // --- الحماية من الـ XSS (تنظيف الرسالة) ---
-            // بنقوله شيل أي تاج HTML أو JS من الرسالة، خليها نص صافي بس
             const cleanMessage = sanitizeHtml(message, {
-                allowedTags: [], // مش بنسمح بأي تاجات خالص
+                allowedTags: [], 
                 allowedAttributes: {}
             });
 
-            // لو الهاكر باعت كود بس وبعد التنظيف الرسالة بقت فاضية، نرفضها
             if (!cleanMessage.trim()) {
                 return res.status(400).send("Invalid message format.");
             }
             // ------------------------------------------
 
-            const getUser = global.onlineUsers.get(to);
+            // هنجيب حالة اليوزر بس لو الشات فردي
+            const getUser = to ? global.onlineUsers.get(to) : null;
 
-            // طلقة واحدة في الداتا بيز (خد بالك استخدمنا cleanMessage بدل message)
+            // طلقة واحدة في الداتا بيز (بنفس ستايلك بالظبط)
             const newMessage = await prisma.messages.create({
                 data: {
-                    message: cleanMessage, // حفظنا الرسالة النضيفة
+                    message: cleanMessage,
                     senderId: from,
-                    receiverId: to,
-                    messageStatus: getUser ? "delivered" : "sent",
+                    receiverId: to || null,      // لو مفيش to (عشان جروب) هياخد null
+                    groupId: groupId || null,   // لو مفيش groupId (عشان فردي) هياخد null
+                    messageStatus: groupId ? "sent" : (getUser ? "delivered" : "sent"),
                     replyToId: replyTo || null,
                 },
                 include: {
                     sender: true,
                     receiver: true,
                     replyTo: true,
+                    group: true // ضفناها عشان لو جروب نرجع داتا الجروب
                 }
             });
 
-            // ... (باقي كود الدالة زي ما هو، هتبعت newMessage في السوكيت وفي الـ res)
-            const sendUserSocket = global.onlineUsers.get(to);
-            if(sendUserSocket) {
-                global.io.to(sendUserSocket).emit("msg-send-refresh", {
-                    triggered: true,
-                    newMessage: newMessage,
+            // --- السحر بتاع السوكيت للجروب وللفردي ---
+            if (groupId) {
+                // لو جروب: نبعت للروم كلها مرة واحدة
+                global.io.to(groupId).emit("msg-receive", {
+                    from: from,
+                    message: newMessage,
+                    isGroup: true
                 });
-            }
+            } else {
+                // لو فردي: نفس كودك القديم بتاع msg-send-refresh بالمللي
+                const sendUserSocket = global.onlineUsers.get(to);
+                if(sendUserSocket) {
+                    global.io.to(sendUserSocket).emit("msg-send-refresh", {
+                        triggered: true,
+                        newMessage: newMessage,
+                    });
+                }
 
-            const receivedUserSocket = global.onlineUsers.get(from);
-            if(receivedUserSocket) {
-                global.io.to(receivedUserSocket).emit("msg-send-refresh", {
-                    triggered: true,
-                    newMessage: newMessage,
-                });
+                const receivedUserSocket = global.onlineUsers.get(from);
+                if(receivedUserSocket) {
+                    global.io.to(receivedUserSocket).emit("msg-send-refresh", {
+                        triggered: true,
+                        newMessage: newMessage,
+                    });
+                }
             }
 
             return res.status(201).json({ message: newMessage });
         }
 
-        return res.status(400).send("From, To, and Message are required.");
+        return res.status(400).send("Message, From, and (To or GroupId) are required.");
     } catch (err) {
         next(err);
     }
@@ -271,6 +283,37 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
             });
         }
 
+        // --- الإضافة الخاصة بالجروبات عشان متختفيش مع الـ Refresh ---
+        const userGroups = await prisma.group.findMany({
+            where: { userIds: { has: userId } },
+            include: {
+                users: { select: { id: true, name: true, profilePicture: true, email: true } }
+            }
+        });
+
+        userGroups.forEach((group) => {
+            // لو الجروب مش موجود في القائمة، هنضيفه كأنه جهة اتصال
+            if (!users.has(group.id)) {
+                users.set(group.id, {
+                    id: group.id,
+                    name: group.name,
+                    profilePicture: group.profilePicture || "/default_avatar.png",
+                    about: group.about,
+                    isGroup: true, // عشان الـ UI يفهم إنه جروب
+                    users: group.users,
+                    adminIds: group.adminIds,
+                    type: "text",
+                    message: "Tap to view group", // رسالة افتراضية
+                    messageStatus: "read",
+                    createdAt: group.createdAt,
+                    totalUnreadMessages: 0,
+                    senderId: group.id, // بنعتبر الجروب هو الراسل عشان القائمة تظبط
+                    receiverId: userId
+                });
+            }
+        });
+        // --------------------------------------------------------
+
         return res.status(200).json({
             users: Array.from(users.values()),
             onlineUsers: Array.from(global.onlineUsers.keys()),
@@ -315,9 +358,8 @@ export const editMessage = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
         const { messageId, newMessage } = req.body;
-        const userId = req.user.id; // جاية من الـ verifyToken
+        const userId = req.user.id; 
 
-        // نجيب الرسالة من الداتا بيز
         const msg = await prisma.messages.findUnique({ where: { id: messageId } });
 
         if (!msg) return res.status(404).send("Message not found.");
@@ -325,25 +367,30 @@ export const editMessage = async (req, res, next) => {
         if (msg.isDeleted) return res.status(400).send("Cannot edit a deleted message.");
         if (msg.type !== "text") return res.status(400).send("Only text messages can be edited.");
 
-        // حساب الوقت: هل عدى 15 دقيقة (900,000 ملي ثانية)؟
         const timeDifference = Date.now() - new Date(msg.createdAt).getTime();
         if (timeDifference > 15 * 60 * 1000) {
             return res.status(400).send("Time limit exceeded. You can only edit messages within 15 minutes.");
         }
 
-        // لو كله تمام، نعدل الرسالة
         const updatedMessage = await prisma.messages.update({
             where: { id: messageId },
             data: { 
-                message: newMessage, // هنا المفروض نكون مشفرينه في الفرونت إند قبل ما يتبعت
+                message: newMessage, 
                 isEdited: true 
-            }
+            },
+            include: { sender: true, receiver: true } // مهم نرجع الـ sender عشان الـ UI
         });
 
-        // نبعت للسوكيت عشان شاشة الطرف التاني تتحدث لايف
-        const receiverSocket = global.onlineUsers.get(updatedMessage.receiverId);
-        if (receiverSocket) {
-            global.io.to(receiverSocket).emit("message-edited", updatedMessage);
+        // --- الإصلاح هنا: نبعت للسوكيت الصح ---
+        if (msg.groupId) {
+            // لو جروب: بلّغ الروم كلها
+            global.io.to(msg.groupId).emit("message-edited", updatedMessage);
+        } else if (msg.receiverId) {
+            // لو فردي: بلّغ المستلم
+            const receiverSocket = global.onlineUsers.get(msg.receiverId);
+            if (receiverSocket) {
+                global.io.to(receiverSocket).emit("message-edited", updatedMessage);
+            }
         }
 
         return res.status(200).json({ message: updatedMessage });
