@@ -1,8 +1,6 @@
 import getPrismaInstance from "../utils/PrismaClient.js";
 import {generateToken04} from "../utils/TokenGenerator.js";
 
-
-
 export const checkUser = async (req, res, next) => {
     try {
         const { email } = req.body;
@@ -16,7 +14,8 @@ export const checkUser = async (req, res, next) => {
         const prisma = getPrismaInstance();
         const user = await prisma.user.findUnique({
             where: { email },
-            select: { id: true, email: true, name: true, profilePicture: true }, // Select only required fields
+            // ضفنا الـ publicKey هنا عشان الـ Context في الفرونت يحفظه
+            select: { id: true, email: true, name: true, profilePicture: true, about: true, publicKey: true }, 
         });
 
         if (!user) {
@@ -37,24 +36,27 @@ export const checkUser = async (req, res, next) => {
     }
 };
 
-
 export const onBoardUser = async (req, res, next) => {
     try {
-        const {email, name, about, image: profilePicture} = req.body;
+        // استلام الـ publicKey من الـ Request Body
+        const {email, name, about, image: profilePicture, publicKey} = req.body;
+        
         if(!email || !name || !profilePicture) {
             return res.send("Email, Name and Image are required.");
         };
+
         const prisma = getPrismaInstance();
         const user = await prisma.user.create({
-            data: { email, name, about, profilePicture },
+            // تخزين الـ publicKey في الداتا بيز لأول مرة
+            data: { email, name, about, profilePicture, publicKey },
         });
-        console.log(user);
+
+        console.log("New User Created with Public Key:", user.id);
         return res.json({message: "Success", status: true, user});
     } catch(err) {
         next(err);
     };
 };
-
 
 export const getAllUsers = async (req, res, next) => {
     try {
@@ -62,7 +64,9 @@ export const getAllUsers = async (req, res, next) => {
 
         const users = await prisma.user.findMany({
             orderBy: { name: "asc" },
-            select: { id: true, email: true, name: true, profilePicture: true, about: true }, // Only select necessary fields
+            // مهم جداً نبعت الـ publicKey في لستة الـ Contacts 
+            // عشان لما تحب تبدأ شات متشفر مع حد، تلاقي مفتاحه جاهز
+            select: { id: true, email: true, name: true, profilePicture: true, about: true, publicKey: true },
         });
 
         const usersGroupedByInitialLetter = users.reduce((acc, user) => {
@@ -78,15 +82,14 @@ export const getAllUsers = async (req, res, next) => {
     }
 };
 
-
 export const generateToken = async (req, res, next) => {
     try {
-        console.log("User entered");
         const appId = parseInt(process.env.ZEGO_APP_ID);
         const serverSecret = process.env.ZEGO_SERVER_ID;
         const userId = req.params.userId;
-        const effectiveTime = process.env.EFFECTIVE_TIME;
+        const effectiveTime = parseInt(process.env.EFFECTIVE_TIME) || 3600;
         const payload = "";
+        
         if(appId && serverSecret && userId) {
             const token = await generateToken04(appId, userId, serverSecret, effectiveTime, payload);
             return res.status(200).json({
@@ -97,4 +100,31 @@ export const generateToken = async (req, res, next) => {
     } catch (err) {
         next(err);
     };
+};
+export const updateUserInfo = async (req, res, next) => {
+    try {
+        const prisma = getPrismaInstance();
+        const { id, name, about, profilePicture } = req.body;
+
+        if (!id || !name) {
+            return res.status(400).send("Name and ID are required.");
+        }
+
+        const updatedUser = await prisma.user.update({
+            where: { id },
+            data: { 
+                name, 
+                about, // الـ About هيوصل هنا طلاسم (متشفر) من الفرونت إند
+                profilePicture 
+            },
+        });
+
+        return res.status(200).json({
+            message: "Profile updated successfully.",
+            status: true,
+            user: updatedUser
+        });
+    } catch (err) {
+        next(err);
+    }
 };

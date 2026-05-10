@@ -108,18 +108,16 @@ io.on("connection", (socket) => {
             if (sockId === socket.id) {
                 onlineUsers.delete(userId);
                 
-                // --- السحر هنا: نسجل وقت الخروج في الداتا بيز ونبلّغ الناس ---
                 try {
                     const prisma = getPrismaInstance();
-                    const currentTime = new Date();
+                    // التعديل: نستخدم ISO String فوراً
+                    const currentTime = new Date().toISOString(); 
                     
-                    // تحديث وقت اليوزر في الداتا بيز
                     await prisma.user.update({
                         where: { id: userId },
                         data: { lastSeen: currentTime }
                     });
                     
-                    // نبعت للناس اللي فاتحين الأبلكيشن إن اليوزر ده قفل وادي آخر ظهور ليه
                     socket.broadcast.emit("user-offline", { 
                         userId: userId, 
                         lastSeen: currentTime 
@@ -127,7 +125,6 @@ io.on("connection", (socket) => {
                 } catch (error) {
                     console.log("Error updating last seen:", error);
                 }
-                // -------------------------------------------------------------
                 break;
             }
         }
@@ -135,13 +132,38 @@ io.on("connection", (socket) => {
             onlineUsers: Array.from(onlineUsers.keys())
         });
     });
+    socket.on("signout", async (id) => {
+        if (id) {
+            // 1. مسح اليوزر من قائمة الـ Online
+            onlineUsers.delete(id);
 
-    socket.on("signout", (id) => {
-        onlineUsers.delete(id);
-        socket.broadcast.emit("online-users", {
-            onlineUsers: Array.from(onlineUsers.keys())
-        });
-    })
+            try {
+                const prisma = getPrismaInstance();
+                const currentTime = new Date().toISOString();
+
+                // 2. تحديث وقت الخروج في الداتا بيز (Last Seen)
+                await prisma.user.update({
+                    where: { id: id },
+                    data: { lastSeen: currentTime }
+                });
+
+                // 3. تبليغ باقي اليوزرز إن اليوزر ده قفل (user-offline)
+                // دي اللي بتخلي الـ Last Seen يظهر "الآن" عند الناس التانية
+                socket.broadcast.emit("user-offline", { 
+                    userId: id, 
+                    lastSeen: currentTime 
+                });
+
+                // 4. تحديث قائمة الـ Online للكل
+                socket.broadcast.emit("online-users", {
+                    onlineUsers: Array.from(onlineUsers.keys())
+                });
+
+            } catch (error) {
+                console.log("Error during signout socket event:", error);
+            }
+        }
+    });
 
     socket.on("trigger-typing", (data) => {
         console.log("Is typing")
@@ -151,6 +173,58 @@ io.on("connection", (socket) => {
             typing: data.typing
         })
     })
+
+    socket.on("group-msg-seen", async ({ userId, groupId }) => {
+        try {
+            if (!userId || !groupId) return; // صمام أمان
+
+            const prisma = getPrismaInstance();
+
+            // 1. هات كل الرسايل في الجروب ده اللي اليوزر ده (محمد) لسه مشافهاش
+            // ومش هو اللي باعتها (senderId != userId)
+            const unseenMessages = await prisma.messages.findMany({
+                where: {
+                    groupId: groupId,
+                    senderId: { not: userId },
+                    seenBy: { none: { userId: userId } }
+                },
+                select: { id: true }
+            });
+
+            if (unseenMessages.length > 0) {
+                // 2. سجل "بصمة" مشاهدة لكل الرسائل دي مرة واحدة
+                await prisma.messageSeen.createMany({
+                    data: unseenMessages.map(msg => ({
+                        messageId: msg.id,
+                        userId: userId
+                    })),
+                    skipDuplicates: true
+                });
+
+                // 3. تحديث لايف: لكل رسالة من دول، شيك هل بقت "شافها الكل"؟
+                const group = await prisma.group.findUnique({
+                    where: { id: groupId },
+                    select: { userIds: true }
+                });
+
+                for (const msg of unseenMessages) {
+                    const seenCount = await prisma.messageSeen.count({
+                        where: { messageId: msg.id }
+                    });
+
+                    // لو عدد اللي شافوا = (عدد الأعضاء - 1)
+                    if (seenCount >= (group.userIds.length - 1)) {
+                        io.to(groupId).emit("group-msg-blue-ticks", { 
+                            messageId: msg.id, 
+                            groupId: groupId 
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            console.log("Error in group-msg-seen:", error);
+        }
+    });
 
     socket.on("send-msg", (data) => {
         const sendUserSocket = onlineUsers.get(data.to);

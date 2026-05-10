@@ -6,13 +6,10 @@ import sanitizeHtml from "sanitize-html";
 export const addMessage = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
-        // زودنا groupId هنا
         let { message, from, to, replyTo, groupId } = req.body;
 
-        // ضفنا شرط إن يكون فيه يا to يا groupId
         if (message && from && (to || groupId)) {
             
-            // --- الحماية من الـ XSS (تنظيف الرسالة) ---
             const cleanMessage = sanitizeHtml(message, {
                 allowedTags: [], 
                 allowedAttributes: {}
@@ -21,18 +18,15 @@ export const addMessage = async (req, res, next) => {
             if (!cleanMessage.trim()) {
                 return res.status(400).send("Invalid message format.");
             }
-            // ------------------------------------------
 
-            // هنجيب حالة اليوزر بس لو الشات فردي
             const getUser = to ? global.onlineUsers.get(to) : null;
 
-            // طلقة واحدة في الداتا بيز (بنفس ستايلك بالظبط)
             const newMessage = await prisma.messages.create({
                 data: {
                     message: cleanMessage,
                     senderId: from,
-                    receiverId: to || null,      // لو مفيش to (عشان جروب) هياخد null
-                    groupId: groupId || null,   // لو مفيش groupId (عشان فردي) هياخد null
+                    receiverId: to || null,
+                    groupId: groupId || null,
                     messageStatus: groupId ? "sent" : (getUser ? "delivered" : "sent"),
                     replyToId: replyTo || null,
                 },
@@ -40,20 +34,17 @@ export const addMessage = async (req, res, next) => {
                     sender: true,
                     receiver: true,
                     replyTo: true,
-                    group: true // ضفناها عشان لو جروب نرجع داتا الجروب
+                    group: true 
                 }
             });
 
-            // --- السحر بتاع السوكيت للجروب وللفردي ---
             if (groupId) {
-                // لو جروب: نبعت للروم كلها مرة واحدة
                 global.io.to(groupId).emit("msg-receive", {
                     from: from,
                     message: newMessage,
                     isGroup: true
                 });
             } else {
-                // لو فردي: نفس كودك القديم بتاع msg-send-refresh بالمللي
                 const sendUserSocket = global.onlineUsers.get(to);
                 if(sendUserSocket) {
                     global.io.to(sendUserSocket).emit("msg-send-refresh", {
@@ -84,10 +75,8 @@ export const getMessages = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
         const { from, to } = req.params;
-        // ... (باقي الكود فوق زي ما هو)
         const { cursor } = req.query; 
 
-        // حماية إضافية لو الـ from أو الـ to جايين بكلمة undefined
         if (from === "undefined" || to === "undefined") return res.status(400).send("Invalid User IDs");
 
         let messages = await prisma.messages.findMany({
@@ -95,14 +84,14 @@ export const getMessages = async (req, res, next) => {
                 OR: [
                     { senderId: from, receiverId: to },
                     { senderId: to, receiverId: from },
+                    { groupId: to }, // دعم جلب رسائل الجروب لو الـ ID هو ID جروب
                 ],
             },
-            include: { replyTo: true },
+            include: { replyTo: true, sender: true, _count: { select: { seenBy: true }} },
             orderBy: {
                 id: 'desc', 
             },
             take: 40,
-            // التعديل هنا: زودنا شرط إن الـ cursor ميكونش كلمة "undefined" أو "null"
             ...(cursor && cursor !== "undefined" && cursor !== "null" && {
                 cursor: { id: cursor },
                 skip: 1, 
@@ -110,12 +99,10 @@ export const getMessages = async (req, res, next) => {
         });
 
         messages = messages.filter((msg) => {
-            // لو حقل deletedBy موجود، والـ ID بتاعك (from) متسجل جواه، الرسالة دي مش هترجع!
             return !(msg.deletedBy && msg.deletedBy.includes(from));
         });
 
         messages = messages.reverse();
-        // ... (كمل باقي الدالة زي ما ظبطناها في التعديل اللي فات)
 
         const unreadMessageIds = messages
             .filter((message) => message.messageStatus !== 'read' && message.senderId === to)
@@ -131,7 +118,6 @@ export const getMessages = async (req, res, next) => {
             data: { messageStatus: 'read' },
         });
 
-        // تحديث حالة الرسايل في الـ array اللي هترجع للفرونت إند عشان تبان مقروءة فوراً
         messages.forEach((message) => {
             if (message.messageStatus !== 'read' && message.senderId === to) {
                 message.messageStatus = 'read';
@@ -167,19 +153,21 @@ export const addImageMessage = async (req, res, next) => {
                 console.error("Failed to delete local image:", err);
             }
             const prisma = getPrismaInstance();
-            const {from, to} = req.query;
-            if(from && to) {
+            const {from, to, groupId} = req.query; // استلام الـ groupId من الـ query
+            
+            if(from && (to || groupId)) {
                 const message = await prisma.messages.create({
                     data: {
                         message: imageUpload.secure_url,
                         sender: {connect: {id: from}}, 
-                        receiver: {connect: {id: to}},
+                        ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
+                        ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
                         type: "image"
                     }
                 });
                 return res.status(201).json({ message })
             };
-            return res.status(400).send("From and To is required.");
+            return res.status(400).send("From and (To or GroupId) is required.");
         }
         return res.status(400).send("Image is required.");
     } catch (err) {
@@ -199,19 +187,21 @@ export const addAudioMessage = async (req, res, next) => {
                 console.error("Failed to delete local audio:", err);
             }
             const prisma = getPrismaInstance();
-            const {from, to} = req.query;
-            if(from && to) {
+            const {from, to, groupId} = req.query; // استلام الـ groupId من الـ query
+
+            if(from && (to || groupId)) {
                 const message = await prisma.messages.create({
                     data: {
                         message: audioUpload.secure_url,
                         sender: {connect: {id: from}}, 
-                        receiver: {connect: {id: to}},
+                        ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
+                        ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
                         type: "audio"
                     }
                 });
                 return res.status(201).json({ message })
             };
-            return res.status(400).send("From and To is required.");
+            return res.status(400).send("From and (To or GroupId) is required.");
         }
         return res.status(400).send("Audio is required.");
     } catch (err) {
@@ -224,8 +214,6 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
         const userId = req.params.from;
         const prisma = getPrismaInstance();
 
-        // 1. هنعمل كويري واحدة بدل اتنين، ونجيب الداتا مترتبة من الداتا بيز مباشرة
-        // 2. هنستخدم select عشان نجيب الحقول المهمة بس (تقليل استهلاك الرامات بنسبة 70%)
         const messages = await prisma.messages.findMany({
             where: {
                 OR: [{ senderId: userId }, { receiverId: userId }],
@@ -247,7 +235,6 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
         const users = new Map();
         const messageStatusChange = [];
 
-        // Loop أسرع بكتير لأننا مش بنعمل Spread Operator (...) جوا الـ Loop كتير
         messages.forEach((msg) => {
             const isSender = msg.senderId === userId;
             const calculatedId = isSender ? msg.receiverId : msg.senderId;
@@ -270,7 +257,6 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
                 }
                 users.set(calculatedId, user);
             } else if (msg.messageStatus !== "read" && !isSender) {
-                // بدل ما نعمل copy للأوبجيكت كله، بنزود الرقم مباشرة (أسرع جداً في الأداء)
                 const user = users.get(calculatedId);
                 user.totalUnreadMessages += 1;
             }
@@ -283,36 +269,40 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
             });
         }
 
-        // --- الإضافة الخاصة بالجروبات عشان متختفيش مع الـ Refresh ---
         const userGroups = await prisma.group.findMany({
             where: { userIds: { has: userId } },
             include: {
-                users: { select: { id: true, name: true, profilePicture: true, email: true } }
+                users: { select: { id: true, name: true, profilePicture: true, email: true } },
+                // الإضافة: جلب المفتاح المتشفر الخاص بهذا اليوزر فقط في هذا الجروب
+                encryptedKeys: {
+                    where: { userId: userId },
+                    select: { encryptedKey: true }
+                }
             }
         });
 
         userGroups.forEach((group) => {
-            // لو الجروب مش موجود في القائمة، هنضيفه كأنه جهة اتصال
             if (!users.has(group.id)) {
                 users.set(group.id, {
                     id: group.id,
                     name: group.name,
                     profilePicture: group.profilePicture || "/default_avatar.png",
                     about: group.about,
-                    isGroup: true, // عشان الـ UI يفهم إنه جروب
+                    isGroup: true,
+                    isLocked: group.isLocked, // السطر ده هو اللي هيخلي الحالة تثبت بعد الـ Refresh
                     users: group.users,
                     adminIds: group.adminIds,
                     type: "text",
-                    message: "Tap to view group", // رسالة افتراضية
+                    message: "Tap to view group",
                     messageStatus: "read",
                     createdAt: group.createdAt,
                     totalUnreadMessages: 0,
-                    senderId: group.id, // بنعتبر الجروب هو الراسل عشان القائمة تظبط
-                    receiverId: userId
+                    senderId: group.id,
+                    receiverId: userId,
+                    encryptedKey: group.encryptedKeys[0]?.encryptedKey || null,
                 });
             }
         });
-        // --------------------------------------------------------
 
         return res.status(200).json({
             users: Array.from(users.values()),
@@ -353,7 +343,6 @@ export const updateMessageStatusAndUnreadCount = async (req, res, next) => {
     }
 };
 
-// 1. دالة تعديل الرسالة
 export const editMessage = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
@@ -378,15 +367,12 @@ export const editMessage = async (req, res, next) => {
                 message: newMessage, 
                 isEdited: true 
             },
-            include: { sender: true, receiver: true } // مهم نرجع الـ sender عشان الـ UI
+            include: { sender: true, receiver: true }
         });
 
-        // --- الإصلاح هنا: نبعت للسوكيت الصح ---
         if (msg.groupId) {
-            // لو جروب: بلّغ الروم كلها
             global.io.to(msg.groupId).emit("message-edited", updatedMessage);
         } else if (msg.receiverId) {
-            // لو فردي: بلّغ المستلم
             const receiverSocket = global.onlineUsers.get(msg.receiverId);
             if (receiverSocket) {
                 global.io.to(receiverSocket).emit("message-edited", updatedMessage);
@@ -399,39 +385,44 @@ export const editMessage = async (req, res, next) => {
     }
 };
 
-// 2. دالة حذف الرسالة (للجميع أو ليا بس)
 export const deleteMessage = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
-        const { messageId, type } = req.body; // type: "everyone" or "me"
+        const { messageId, type } = req.body; 
         const userId = req.user.id;
 
-        const msg = await prisma.messages.findUnique({ where: { id: messageId } });
+        const msg = await prisma.messages.findUnique({ where: { id: messageId }, include: { group: true } });
         if (!msg) return res.status(404).send("Message not found.");
+
+        const isOwner = msg.senderId === userId;
+        const isAdmin = msg.groupId && msg.group.adminIds.includes(userId);
 
         let updatedMessage;
 
         if (type === "everyone") {
-            if (msg.senderId !== userId) return res.status(403).send("You can only delete your own messages for everyone.");
+            if (!isOwner && !isAdmin) {
+                return res.status(403).send("Only the sender or a group admin can delete for everyone.");
+            }
             
-            // حذف للجميع: بنغير النص ونخلي isDeleted بـ true
             updatedMessage = await prisma.messages.update({
                 where: { id: messageId },
                 data: { 
-                    message: "This message was deleted", // نص افتراضي
+                    message: "This message was deleted", 
                     isDeleted: true 
                 }
             });
 
-            // نبعت للطرف التاني عشان الرسالة تتمسح من عنده لايف
-            const receiverId = msg.senderId === userId ? msg.receiverId : msg.senderId;
-            const receiverSocket = global.onlineUsers.get(receiverId);
-            if (receiverSocket) {
-                global.io.to(receiverSocket).emit("message-deleted", updatedMessage);
+            if (msg.groupId) {
+                global.io.to(msg.groupId).emit("message-deleted", updatedMessage);
+            } else if (msg.receiverId) {
+                const receiverId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+                const receiverSocket = global.onlineUsers.get(receiverId);
+                if (receiverSocket) {
+                    global.io.to(receiverSocket).emit("message-deleted", updatedMessage);
+                }
             }
 
         } else if (type === "me") {
-            // حذف من عندي بس: بنضيف الـ ID بتاعي في مصفوفة deletedBy
             updatedMessage = await prisma.messages.update({
                 where: { id: messageId },
                 data: {
@@ -446,4 +437,56 @@ export const deleteMessage = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+};
+
+// --- الدالة الجديدة لجلب ميديا الجروب ---
+export const getGroupMedia = async (req, res, next) => {
+    try {
+        const prisma = getPrismaInstance();
+        const { groupId } = req.params;
+
+        const mediaMessages = await prisma.messages.findMany({
+            where: {
+                groupId,
+                type: { in: ["image", "video", "file"] },
+                isDeleted: false,
+            },
+            orderBy: { createdAt: "desc" },
+            take: 12, // جلب آخر 12 ملف ميديا كـ Preview
+        });
+
+        return res.status(200).json({ mediaMessages });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const markGroupMessagesAsSeen = async (req, res, next) => {
+  try {
+    const { userId, groupId } = req.body;
+    const prisma = getPrismaInstance();
+
+    // 1. هات كل الرسايل في الجروب ده اللي اليوزر ده لسه مشافهاش
+    const messages = await prisma.message.findMany({
+      where: {
+        groupId,
+        senderId: {原型: userId }, // ميسجلش إنه شاف رسايله هو
+        seenBy: { none: { userId } }
+      },
+      select: { id: true, senderId: true }
+    });
+
+    // 2. سجل إن اليوزر شافهم
+    if (messages.length > 0) {
+      await prisma.messageSeen.createMany({
+        data: messages.map(msg => ({
+          messageId: msg.id,
+          userId: userId
+        })),
+        skipDuplicates: true
+      });
+    }
+
+    return res.status(200).json({ status: "success" });
+  } catch (err) { next(err); }
 };
