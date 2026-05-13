@@ -55,9 +55,43 @@ global.io = io;
 io.on("connection", (socket) => {
     console.log("Connected to socket");
     global.chatSocket = socket;
-    socket.on("add-user", (userId) => {
+    socket.on("add-user", async (userId) => {
         onlineUsers.set(userId, socket.id);
         console.log(onlineUsers);
+        
+        // حدّث الرسايل اللي اتبعتله وهو أوفلاين لـ delivered
+        try {
+            const prisma = getPrismaInstance();
+            const pendingMessages = await prisma.messages.findMany({
+                where: {
+                    receiverId: userId,
+                    messageStatus: "sent"
+                },
+                select: { id: true, senderId: true }
+            });
+
+            if (pendingMessages.length > 0) {
+                await prisma.messages.updateMany({
+                    where: {
+                        receiverId: userId,
+                        messageStatus: "sent"
+                    },
+                    data: { messageStatus: "delivered" }
+                });
+
+                // بلّغ كل سيندر إن رسالته delivered
+                const senderIds = [...new Set(pendingMessages.map(m => m.senderId))];
+                senderIds.forEach(senderId => {
+                    const senderSocket = onlineUsers.get(senderId);
+                    if (senderSocket) {
+                        global.io.to(senderSocket).emit("msg-delivered", { to: userId });
+                    }
+                });
+            }
+        } catch (err) {
+            console.log("Error updating pending messages:", err);
+        }
+
         socket.broadcast.emit("online-users", {
             onlineUsers: Array.from(onlineUsers.keys())
         });

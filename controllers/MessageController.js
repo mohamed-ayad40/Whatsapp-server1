@@ -19,15 +19,13 @@ export const addMessage = async (req, res, next) => {
                 return res.status(400).send("Invalid message format.");
             }
 
-            const getUser = to ? global.onlineUsers.get(to) : null;
-
             const newMessage = await prisma.messages.create({
                 data: {
                     message: cleanMessage,
                     senderId: from,
                     receiverId: to || null,
                     groupId: groupId || null,
-                    messageStatus: groupId ? "sent" : (getUser ? "delivered" : "sent"),
+                    messageStatus: "sent", // دايماً sent أول ما تتخزن
                     replyToId: replyTo || null,
                 },
                 include: {
@@ -39,27 +37,9 @@ export const addMessage = async (req, res, next) => {
             });
 
             if (groupId) {
-                global.io.to(groupId).emit("msg-receive", {
-                    from: from,
-                    message: newMessage,
-                    isGroup: true
-                });
+                global.io.to(groupId).emit("msg-receive", { from, message: newMessage, isGroup: true });
             } else {
-                const sendUserSocket = global.onlineUsers.get(to);
-                if(sendUserSocket) {
-                    global.io.to(sendUserSocket).emit("msg-send-refresh", {
-                        triggered: true,
-                        newMessage: newMessage,
-                    });
-                }
-
-                const receivedUserSocket = global.onlineUsers.get(from);
-                if(receivedUserSocket) {
-                    global.io.to(receivedUserSocket).emit("msg-send-refresh", {
-                        triggered: true,
-                        newMessage: newMessage,
-                    });
-                }
+                await handleDeliveryStatus(prisma, newMessage, from, to, groupId); // هنا
             }
 
             return res.status(201).json({ message: newMessage });
@@ -144,16 +124,12 @@ export const getMessages = async (req, res, next) => {
 export const addImageMessage = async (req, res, next) => {
     try {
         if(req.file) {
-            const date = Date.now();
             const imageFile = req.file;
             const imageUpload = await cloudinary.uploader.upload(imageFile.path, {resource_type: "image"});
-            try {
-                unlink(imageFile.path);
-            } catch (err) {
-                console.error("Failed to delete local image:", err);
-            }
+            try { unlink(imageFile.path); } catch (err) { console.error("Failed to delete local image:", err); }
+            
             const prisma = getPrismaInstance();
-            const {from, to, groupId} = req.query; // استلام الـ groupId من الـ query
+            const {from, to, groupId} = req.query;
             
             if(from && (to || groupId)) {
                 const message = await prisma.messages.create({
@@ -162,32 +138,31 @@ export const addImageMessage = async (req, res, next) => {
                         sender: {connect: {id: from}}, 
                         ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
                         ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
-                        type: "image"
+                        type: "image",
+                        messageStatus: "sent", // دايماً sent الأول
                     }
                 });
-                return res.status(201).json({ message })
-            };
+
+                if (!groupId) {
+                    await handleDeliveryStatus(prisma, message, from, to, groupId);
+                }
+                return res.status(201).json({ message });
+            }
             return res.status(400).send("From and (To or GroupId) is required.");
         }
         return res.status(400).send("Image is required.");
-    } catch (err) {
-        next(err);
-    };
+    } catch (err) { next(err); }
 };
 
 export const addAudioMessage = async (req, res, next) => {
     try {
         if(req.file) {
-            const date = Date.now();
             const audioFile = req.file;
             const audioUpload = await cloudinary.uploader.upload(audioFile.path, {resource_type: "video"});
-            try {
-                unlink(audioFile.path);
-            } catch (err) {
-                console.error("Failed to delete local audio:", err);
-            }
+            try { unlink(audioFile.path); } catch (err) { console.error("Failed to delete local audio:", err); }
+            
             const prisma = getPrismaInstance();
-            const {from, to, groupId} = req.query; // استلام الـ groupId من الـ query
+            const {from, to, groupId} = req.query;
 
             if(from && (to || groupId)) {
                 const message = await prisma.messages.create({
@@ -196,17 +171,21 @@ export const addAudioMessage = async (req, res, next) => {
                         sender: {connect: {id: from}}, 
                         ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
                         ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
-                        type: "audio"
+                        type: "audio",
+                        messageStatus: "sent", // دايماً sent الأول
                     }
                 });
-                return res.status(201).json({ message })
-            };
+
+                if (!groupId) {
+                    await handleDeliveryStatus(prisma, message, from, to, groupId);
+                }
+
+                return res.status(201).json({ message });
+            }
             return res.status(400).send("From and (To or GroupId) is required.");
         }
         return res.status(400).send("Audio is required.");
-    } catch (err) {
-        next(err);
-    };
+    } catch (err) { next(err); }
 };
 
 export const getInitialContactsWithMessages = async (req, res, next) => {
@@ -245,7 +224,7 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
 
             if (!users.has(calculatedId)) {
                 let user = { 
-                    id: msg.id, type: msg.type, message: msg.message, 
+                    id: calculatedId, type: msg.type, message: msg.message, 
                     messageStatus: msg.messageStatus, createdAt: msg.createdAt, 
                     senderId: msg.senderId, receiverId: msg.receiverId 
                 };
@@ -262,11 +241,26 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
             }
         });
 
+        // بعد - صح ✅
         if (messageStatusChange.length) {
-            await prisma.messages.updateMany({
-                where: { id: { in: messageStatusChange } },
-                data: { messageStatus: "delivered" },
-            });
+            // بس حول لـ delivered لو المستقبل أونلاين فعلاً
+            const onlineMessageIds = [];
+
+            for (const msg of messages) {
+                if (messageStatusChange.includes(msg.id)) {
+                    const receiverId = msg.senderId === userId ? msg.receiverId : msg.senderId;
+                    if (receiverId && global.onlineUsers.has(receiverId)) {
+                        onlineMessageIds.push(msg.id);
+                    }
+                }
+            }
+
+            if (onlineMessageIds.length > 0) {
+                await prisma.messages.updateMany({
+                    where: { id: { in: onlineMessageIds } },
+                    data: { messageStatus: "delivered" },
+                });
+            }
         }
 
         const userGroups = await prisma.group.findMany({
@@ -489,4 +483,30 @@ export const markGroupMessagesAsSeen = async (req, res, next) => {
 
     return res.status(200).json({ status: "success" });
   } catch (err) { next(err); }
+};
+
+// helper يتحط فوق الدوال مباشرة
+const handleDeliveryStatus = async (prisma, message, from, to, groupId) => {
+    if (groupId) return; // الجروبات مش محتاجة الـ logic دي
+
+    const sendUserSocket = global.onlineUsers.get(to);
+    if (sendUserSocket) {
+        await prisma.messages.update({
+            where: { id: message.id },
+            data: { messageStatus: "delivered" }
+        });
+        message.messageStatus = "delivered";
+        global.io.to(sendUserSocket).emit("msg-send-refresh", { 
+            triggered: true, 
+            newMessage: { ...message, messageStatus: "delivered" } 
+        });
+    }
+
+    const senderSocket = global.onlineUsers.get(from);
+    if (senderSocket) {
+        global.io.to(senderSocket).emit("msg-send-refresh", { 
+            triggered: true, 
+            newMessage: message 
+        });
+    }
 };
