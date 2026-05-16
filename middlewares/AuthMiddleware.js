@@ -2,9 +2,23 @@ import admin from "firebase-admin";
 import { readFileSync } from "fs";
 import getPrismaInstance from "../utils/PrismaClient.js";
 
-// تهيئة Firebase Admin
-const serviceAccount = JSON.parse(readFileSync(new URL("../firebaseServiceAccount.json", import.meta.url)));
-if (!admin.apps.length) {
+// تهيئة Firebase Admin (الديناميكية)
+let serviceAccount;
+
+if (process.env.FIREBASE_CREDENTIALS) {
+    // 1. لو إحنا على السيرفر (Hugging Face) بيقرأ من الـ Secrets
+    serviceAccount = JSON.parse(process.env.FIREBASE_CREDENTIALS);
+} else {
+    // 2. لو إحنا على الـ Localhost بيقرأ من الملف العادي بتاعك
+    try {
+        serviceAccount = JSON.parse(readFileSync(new URL("../firebaseServiceAccount.json", import.meta.url)));
+    } catch (error) {
+        console.error("Error reading local Firebase config file:", error);
+    }
+}
+
+// 3. تشغيل فايربيز لو لقينا الداتا 
+if (serviceAccount && !admin.apps.length) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
     });
