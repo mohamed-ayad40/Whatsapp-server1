@@ -195,7 +195,7 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
 
         const messages = await prisma.messages.findMany({
             where: {
-                OR: [{ senderId: userId }, { receiverId: userId }],
+                OR: [{ senderId: userId }, { receiverId: userId }], groupId: null,
             },
             orderBy: { createdAt: "desc" },
             select: {

@@ -16,7 +16,7 @@ app.use(helmet()); // ضيف السطر ده هنا تحت تعريف الـ app
 
 connectCloudinary();
 app.use(cors({
-    origin: ["https://whatsapp-client-delta.vercel.app", "http://localhost:3000"], // Allow requests from your client
+    origin: ["https://whatsapp-client-delta.vercel.app", "http://localhost:3000", "https://localhost:3000", "https://localhost:3001"],
     credentials: true, // Allow cookies and credentials
     methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
     addTrailingSlash: false,
@@ -38,7 +38,7 @@ const server = app.listen(process.env.PORT || 7860, () => {
 
 const io = new Server(server, {
     cors: {
-        origin: ["https://whatsapp-client-delta.vercel.app", "http://localhost:3000"], // Allow requests from your client
+        origin: ["https://whatsapp-client-delta.vercel.app", "http://localhost:3000", "https://localhost:3000", "https://localhost:3001"],
         // credentials: true, // Allow cookies and credentials
         methods: "GET,POST,PUT,DELETE,OPTIONS", // Allow necessary methods
         // preflightContinue: true,
