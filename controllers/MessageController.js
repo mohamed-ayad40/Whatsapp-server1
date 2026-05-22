@@ -64,12 +64,12 @@ export const getMessages = async (req, res, next) => {
                 OR: [
                     { senderId: from, receiverId: to },
                     { senderId: to, receiverId: from },
-                    { groupId: to }, // دعم جلب رسائل الجروب لو الـ ID هو ID جروب
+                    { groupId: to }, 
                 ],
             },
             include: { replyTo: true, sender: true, _count: { select: { seenBy: true }} },
             orderBy: {
-                id: 'desc', 
+                id: 'desc', // بنجيب أحدث الرسايل
             },
             take: 40,
             ...(cursor && cursor !== "undefined" && cursor !== "null" && {
@@ -78,11 +78,14 @@ export const getMessages = async (req, res, next) => {
             }),
         });
 
+        const fetchedCount = messages.length;
+
         messages = messages.filter((msg) => {
             return !(msg.deletedBy && msg.deletedBy.includes(from));
         });
 
-        messages = messages.reverse();
+        // 🚨 التعديل السحري: شيلنا الـ reverse() من هنا تماماً!
+        // هنسيب الرسايل تروح للفرونت إند مترتبة من الأحدث للأقدم (زي ما رجعت من Prisma)
 
         const unreadMessageIds = messages
             .filter((message) => message.messageStatus !== 'read' && message.senderId === to)
@@ -112,8 +115,9 @@ export const getMessages = async (req, res, next) => {
 
         res.status(200).json({
             messages,
-            nextCursor: messages.length > 0 ? messages[0].id : null,
-            hasMore: messages.length === 40, 
+            // 🚨 تحديث مهم: عشان شيلنا الـ reverse، الـ Cursor الصح هو آخر رسالة في الأراي (أقدم واحدة في الباتش)
+            nextCursor: messages.length > 0 ? messages[messages.length - 1].id : null,
+            hasMore: fetchedCount === 40, 
         });
 
     } catch (err) {
