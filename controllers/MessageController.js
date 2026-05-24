@@ -19,6 +19,19 @@ export const addMessage = async (req, res, next) => {
                 return res.status(400).send("Invalid message format.");
             }
 
+            // 🚨 حماية البلوك (للمحادثات الفردية فقط)
+            if (!groupId && to) {
+                const receiver = await prisma.user.findUnique({
+                    where: { id: to },
+                    select: { blockedUsers: true }
+                });
+
+                // لو المستلم عاملك بلوك، رجع 403 (أو 200 بس متحفظش حاجة عشان ميدراش)
+                if (receiver?.blockedUsers?.includes(from)) {
+                    return res.status(403).json({ message: "You are blocked by this user." });
+                }
+            }
+
             const newMessage = await prisma.messages.create({
                 data: {
                     message: cleanMessage,
@@ -168,15 +181,27 @@ export const addAudioMessage = async (req, res, next) => {
             const prisma = getPrismaInstance();
             const {from, to, groupId} = req.query;
 
+            // 🚨 الإضافة الجديدة: استقبال مصفوفة الأرقام من الـ Body
+            let waveformData = [];
+            if (req.body.waveform) {
+                try {
+                    // الـ FormData بيبعت البيانات كـ String، فلازم نرجعه لـ Array
+                    waveformData = JSON.parse(req.body.waveform);
+                } catch (e) {
+                    console.error("Failed to parse waveform data:", e);
+                }
+            }
+
             if(from && (to || groupId)) {
                 const message = await prisma.messages.create({
                     data: {
                         message: audioUpload.secure_url,
+                        waveform: waveformData, // 🚨 حفظ شكل الموجة هنا!
                         sender: {connect: {id: from}}, 
                         ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
                         ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
                         type: "audio",
-                        messageStatus: "sent", // دايماً sent الأول
+                        messageStatus: "sent", 
                     }
                 });
 
@@ -512,5 +537,26 @@ const handleDeliveryStatus = async (prisma, message, from, to, groupId) => {
             triggered: true, 
             newMessage: message 
         });
+    }
+};
+
+export const deleteChat = async (req, res, next) => {
+    try {
+        const { userId, chatId } = req.body;
+        const prisma = getPrismaInstance();
+
+        // 🚨 مسح كل الرسايل المتبادلة بين الشخصين دول نهائياً
+        await prisma.messages.deleteMany({
+            where: {
+                OR: [
+                    { senderId: userId, receiverId: chatId },
+                    { senderId: chatId, receiverId: userId }
+                ]
+            }
+        });
+
+        return res.status(200).json({ status: true, message: "Chat deleted successfully." });
+    } catch (err) {
+        next(err);
     }
 };

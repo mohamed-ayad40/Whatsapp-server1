@@ -105,6 +105,30 @@ io.on("connection", (socket) => {
         socket.broadcast.to(chatId).emit("user-joined", { userId });
     });
 
+    // ==========================================
+    // تمرير إشارات WebRTC (Peer-to-Peer Signaling)
+    // ==========================================
+    socket.on("webrtc-offer", (data) => {
+        const sendUserSocket = onlineUsers.get(data.to);
+        if (sendUserSocket) {
+            socket.to(sendUserSocket).emit("webrtc-offer-received", data.offer);
+        }
+    });
+
+    socket.on("webrtc-answer", (data) => {
+        const sendUserSocket = onlineUsers.get(data.to);
+        if (sendUserSocket) {
+            socket.to(sendUserSocket).emit("webrtc-answer-received", data.answer);
+        }
+    });
+
+    socket.on("webrtc-ice-candidate", (data) => {
+        const sendUserSocket = onlineUsers.get(data.to);
+        if (sendUserSocket) {
+            socket.to(sendUserSocket).emit("webrtc-ice-candidate-received", data.candidate);
+        }
+    });
+
     socket.on("leave-chat", ({ userId, chatId }) => {
         socket.leave(chatId); // Leave the chat room
         console.log(`${userId} left chat ${chatId}`);
@@ -232,7 +256,6 @@ io.on("connection", (socket) => {
                         messageId: msg.id,
                         userId: userId
                     })),
-                    skipDuplicates: true
                 });
 
                 // 3. تحديث لايف: لكل رسالة من دول، شيك هل بقت "شافها الكل"؟
@@ -260,32 +283,59 @@ io.on("connection", (socket) => {
         }
     });
 
-    socket.on("send-msg", (data) => {
-        const sendUserSocket = onlineUsers.get(data.to);
-        if(sendUserSocket) {
-            socket.to(sendUserSocket).emit("msg-receive", {
-                from: data.from,
-                message: data.message,
-            })
-        };
+    socket.on("send-msg", async (data) => {
+        try {
+            const prisma = getPrismaInstance();
+            // تشييك السيكيوريتي: هل المستلم عامل بلوك للمرسل؟
+            const receiver = await prisma.user.findUnique({
+                where: { id: data.to },
+                select: { blockedUsers: true }
+            });
+
+            // لو المستلم عاملك بلوك، ارمي الرسالة في البحر واعمل return
+            if (receiver?.blockedUsers?.includes(data.from)) {
+                return; 
+            }
+
+            // لو مفيش بلوك، كمل طبيعي
+            const sendUserSocket = onlineUsers.get(data.to);
+            if(sendUserSocket) {
+                socket.to(sendUserSocket).emit("msg-receive", {
+                    from: data.from,
+                    message: data.message,
+                });
+            };
+        } catch (err) {
+            console.log(err);
+        }
     });
-    socket.on("outgoing-voice-call", (data) => {
+    socket.on("outgoing-voice-call", async (data) => {
+        const prisma = getPrismaInstance();
+        const receiver = await prisma.user.findUnique({ where: { id: data.to }, select: { blockedUsers: true } });
+        
+        // لو معموله بلوك، المكالمة مش هتروح أصلاً
+        if (receiver?.blockedUsers?.includes(data.from)) return;
+
         const sendUserSocket = onlineUsers.get(data.to);
         if(sendUserSocket) {
             socket.to(sendUserSocket).emit("incoming-voice-call", {
-                from: data.from,
-                roomId: data.roomId,
-                callType: data.callType
+                from: data.from, roomId: data.roomId, callType: data.callType
             });
         };
     });
-    socket.on("outgoing-video-call", (data) => {
+
+    // 3. تأمين مكالمات الفيديو
+    socket.on("outgoing-video-call", async (data) => {
+        const prisma = getPrismaInstance();
+        const receiver = await prisma.user.findUnique({ where: { id: data.to }, select: { blockedUsers: true } });
+        
+        // لو معموله بلوك، المكالمة مش هتروح أصلاً
+        if (receiver?.blockedUsers?.includes(data.from)) return;
+
         const sendUserSocket = onlineUsers.get(data.to);
         if(sendUserSocket) {
             socket.to(sendUserSocket).emit("incoming-video-call", {
-                from: data.from,
-                roomId: data.roomId,
-                callType: data.callType
+                from: data.from, roomId: data.roomId, callType: data.callType
             });
         };
     });

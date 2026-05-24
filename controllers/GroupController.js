@@ -203,3 +203,37 @@ export const addGroupMembers = async (req, res, next) => {
     return res.status(200).json({ group: updatedGroup });
   } catch (err) { next(err); }
 };
+// 5. تعديل بيانات الجروب (تغيير الصورة أو الاسم) - Admin Only
+export const updateGroupData = async (req, res, next) => {
+  try {
+    const prisma = getPrismaInstance();
+    const { groupId, profilePicture, name, description } = req.body;
+    const adminId = req.user.id;
+
+    // 1. نتأكد إن الجروب موجود واليوزر ده أدمن
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) return res.status(404).send("Group not found.");
+    if (!group.adminIds.includes(adminId)) return res.status(403).send("Admin privilege required.");
+
+    // 2. تحديث الداتا
+    const dataToUpdate = {};
+    if (profilePicture !== undefined) dataToUpdate.profilePicture = profilePicture;
+    if (name !== undefined) dataToUpdate.name = name;
+    if (description !== undefined) dataToUpdate.description = description;
+
+    const updatedGroup = await prisma.group.update({
+      where: { id: groupId },
+      data: dataToUpdate,
+      include: { 
+          users: { select: { id: true, name: true, profilePicture: true, email: true } }
+      }
+    });
+
+    // 3. تبليغ كل الأعضاء بالتغيير عشان الصورة تتحدث عندهم لايف
+    global.io.to(groupId).emit("group-metadata-updated", updatedGroup);
+
+    return res.status(200).json({ group: updatedGroup });
+  } catch (err) { 
+    next(err); 
+  }
+};
