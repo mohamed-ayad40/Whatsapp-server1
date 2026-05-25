@@ -6,16 +6,21 @@ import getPrismaInstance from "../utils/PrismaClient.js";
 let serviceAccount;
 
 if (process.env.FIREBASE_CREDENTIALS) {
-    // 1. لو إحنا على السيرفر (Hugging Face) بيقرأ من الـ Secrets
     serviceAccount = JSON.parse(process.env.FIREBASE_CREDENTIALS);
+
+    serviceAccount.private_key =
+        serviceAccount.private_key.replace(/\\n/g, "\n");
 } else {
-    // 2. لو إحنا على الـ Localhost بيقرأ من الملف العادي بتاعك
-    try {
-        serviceAccount = JSON.parse(readFileSync(new URL("../firebaseServiceAccount.json", import.meta.url)));
-    } catch (error) {
-        console.error("Error reading local Firebase config file:", error);
-    }
+    serviceAccount = JSON.parse(
+        readFileSync(
+            new URL("../firebaseServiceAccount.json", import.meta.url),
+            "utf8"
+        )
+    );
 }
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+});
 
 // 3. تشغيل فايربيز لو لقينا الداتا 
 if (serviceAccount && !admin.apps.length) {
