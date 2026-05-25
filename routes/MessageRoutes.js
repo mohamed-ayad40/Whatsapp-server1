@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { addAudioMessage, addImageMessage, addMessage, deleteMessage, editMessage, getInitialContactsWithMessages, getMessages, getGroupMedia } from "../controllers/MessageController.js";
+import { addAudioMessage, addImageMessage, addMessage, deleteMessage, editMessage, getInitialContactsWithMessages, getMessages, getGroupMedia, deleteChat } from "../controllers/MessageController.js";
 import upload from "../middlewares/multer.js";
 import rateLimit from "express-rate-limit";
 import { verifyToken } from "../middlewares/AuthMiddleware.js";
@@ -21,6 +21,7 @@ router.post("/add-audio-message", verifyToken, upload.single("audio"), addAudioM
 router.get("/get-initial-contacts/:from", verifyToken, getInitialContactsWithMessages);
 router.post("/edit-message", verifyToken, editMessage);
 router.post("/delete-message", verifyToken, deleteMessage);
+router.post("/delete-chat", deleteChat);
 
 // الراوت الجديد لمعرض الميديا
 router.get("/get-group-media/:groupId", verifyToken, getGroupMedia);

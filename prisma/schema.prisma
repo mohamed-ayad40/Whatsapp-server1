@@ -25,6 +25,9 @@ model User {
   // --- الحقول الجديدة لفك الـ Relations ---
   seenMessages     MessageSeen[] 
   publicKey        String?
+
+  blockedUsers     String[]    @db.ObjectId // الناس اللي أنا عملتلهم بلوك
+  blockedBy        String[]    @db.ObjectId // الناس اللي عملولي بلوك
 }
 
 model Group {
@@ -56,6 +59,7 @@ model Messages {
 
   type          String      @default("text")
   message       String      
+  waveform      Float[]     // 🚨 الإضافة الجديدة: مصفوفة أرقام الموجة الصوتية (Pre-computed Peaks)
   messageStatus String      @default("sent")
   createdAt     DateTime    @default(now())
 
@@ -67,7 +71,6 @@ model Messages {
   replyTo       Messages?   @relation("ReplyRelation", fields: [replyToId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   replies       Messages[]  @relation("ReplyRelation")
 
-  // --- الإضافة لعلامات الصح في الجروبات ---
   seenBy        MessageSeen[]
 
   @@index([senderId])

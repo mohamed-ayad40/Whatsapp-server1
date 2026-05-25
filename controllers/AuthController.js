@@ -128,3 +128,75 @@ export const updateUserInfo = async (req, res, next) => {
         next(err);
     }
 };
+export const toggleBlockUser = async (req, res, next) => {
+    try {
+        const { userId, targetId } = req.body;
+        const prisma = getPrismaInstance();
+
+        // 1. نجيب اليوزر عشان نعرف هو عامله بلوك قبل كده ولا لأ
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { blockedUsers: true }
+        });
+
+        const isAlreadyBlocked = user.blockedUsers.includes(targetId);
+
+        // 2. نحسب المصفوفات الجديدة
+        let updatedBlockedUsers = [];
+        let updateQueryForTarget = {};
+
+        if (isAlreadyBlocked) {
+            // فك البلوك (Unblock)
+            updatedBlockedUsers = user.blockedUsers.filter(id => id !== targetId);
+            updateQueryForTarget = {
+                blockedBy: { set: (await prisma.user.findUnique({ where: { id: targetId } })).blockedBy.filter(id => id !== userId) }
+            };
+        } else {
+            // عمل بلوك (Block)
+            updatedBlockedUsers = [...user.blockedUsers, targetId];
+            updateQueryForTarget = {
+                blockedBy: { push: userId }
+            };
+        }
+
+        // 3. ننفذ التحديثين في وقت واحد
+        await prisma.user.update({
+            where: { id: userId },
+            data: { blockedUsers: { set: updatedBlockedUsers } }
+        });
+
+        await prisma.user.update({
+            where: { id: targetId },
+            data: updateQueryForTarget
+        });
+
+        return res.status(200).json({ 
+            status: true, 
+            message: isAlreadyBlocked ? "User unblocked" : "User blocked",
+            blockedUsers: updatedBlockedUsers // بنرجع الـ Array الجديدة عشان الفرونت
+        });
+
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const updateUser = async (req, res, next) => {
+    try {
+        const { id, name, about, profilePicture } = req.body;
+        const prisma = getPrismaInstance();
+
+        const updatedUser = await prisma.user.update({
+            where: { id: id },
+            data: {
+                name,
+                about,
+                profilePicture,
+            }
+        });
+
+        return res.status(200).json({ status: true, user: updatedUser });
+    } catch (err) {
+        next(err);
+    }
+};
