@@ -234,12 +234,10 @@ io.on("connection", (socket) => {
 
     socket.on("group-msg-seen", async ({ userId, groupId }) => {
         try {
-            if (!userId || !groupId) return; // صمام أمان
+            if (!userId || !groupId) return; 
 
             const prisma = getPrismaInstance();
 
-            // 1. هات كل الرسايل في الجروب ده اللي اليوزر ده (محمد) لسه مشافهاش
-            // ومش هو اللي باعتها (senderId != userId)
             const unseenMessages = await prisma.messages.findMany({
                 where: {
                     groupId: groupId,
@@ -250,7 +248,6 @@ io.on("connection", (socket) => {
             });
 
             if (unseenMessages.length > 0) {
-                // 2. سجل "بصمة" مشاهدة لكل الرسائل دي مرة واحدة
                 await prisma.messageSeen.createMany({
                     data: unseenMessages.map(msg => ({
                         messageId: msg.id,
@@ -258,7 +255,6 @@ io.on("connection", (socket) => {
                     })),
                 });
 
-                // 3. تحديث لايف: لكل رسالة من دول، شيك هل بقت "شافها الكل"؟
                 const group = await prisma.group.findUnique({
                     where: { id: groupId },
                     select: { userIds: true }
@@ -269,8 +265,20 @@ io.on("connection", (socket) => {
                         where: { messageId: msg.id }
                     });
 
-                    // لو عدد اللي شافوا = (عدد الأعضاء - 1)
+                    // 🚨 التعديل السحري: إرسال تحديث للعداد لايف لكل أعضاء الجروب
+                    io.to(groupId).emit("group-msg-seen-update", { 
+                        messageId: msg.id, 
+                        seenCount: seenCount,
+                        groupId: groupId 
+                    });
+
                     if (seenCount >= (group.userIds.length - 1)) {
+                        // 🚨 التعديل السحري: تحديث الرسالة في الداتا بيز لـ read عشان متقلبش رمادي تاني
+                        await prisma.messages.update({
+                            where: { id: msg.id },
+                            data: { messageStatus: "read" }
+                        });
+
                         io.to(groupId).emit("group-msg-blue-ticks", { 
                             messageId: msg.id, 
                             groupId: groupId 
@@ -281,6 +289,24 @@ io.on("connection", (socket) => {
         } catch (error) {
             console.log("Error in group-msg-seen:", error);
         }
+    });
+
+    socket.on("group-msg-delivered-ack", async ({ messageId, groupId, senderId }) => {
+        try {
+            const prisma = getPrismaInstance();
+            const msg = await prisma.messages.findUnique({ where: { id: messageId }, select: { messageStatus: true } });
+            
+            if (msg && msg.messageStatus === "sent") {
+                await prisma.messages.update({
+                    where: { id: messageId },
+                    data: { messageStatus: "delivered" }
+                });
+                const senderSocket = onlineUsers.get(senderId);
+                if (senderSocket) {
+                    global.io.to(senderSocket).emit("group-msg-delivered-update", { messageId, groupId });
+                }
+            }
+        } catch (e) { console.error(e); }
     });
 
     socket.on("send-msg", async (data) => {
@@ -299,12 +325,13 @@ io.on("connection", (socket) => {
 
             // لو مفيش بلوك، كمل طبيعي
             const sendUserSocket = onlineUsers.get(data.to);
-            if(sendUserSocket) {
-                socket.to(sendUserSocket).emit("msg-receive", {
-                    from: data.from,
-                    message: data.message,
-                });
-            };
+            if (data.groupId) {
+                socket.to(data.groupId).emit("msg-receive", { from: data.from, message: data.message, isGroup: true });
+                socket.to(data.groupId).emit("msg-send-refresh", { triggered: true, newMessage: data.message });
+            } else if (sendUserSocket) {
+                socket.to(sendUserSocket).emit("msg-receive", { from: data.from, message: data.message });
+                socket.to(sendUserSocket).emit("msg-send-refresh", { triggered: true, newMessage: data.message });
+            }
         } catch (err) {
             console.log(err);
         }

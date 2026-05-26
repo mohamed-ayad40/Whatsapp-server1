@@ -10,23 +10,15 @@ export const addMessage = async (req, res, next) => {
 
         if (message && from && (to || groupId)) {
             
-            const cleanMessage = sanitizeHtml(message, {
-                allowedTags: [], 
-                allowedAttributes: {}
-            });
+            const cleanMessage = sanitizeHtml(message, { allowedTags: [], allowedAttributes: {} });
 
-            if (!cleanMessage.trim()) {
-                return res.status(400).send("Invalid message format.");
-            }
+            if (!cleanMessage.trim()) return res.status(400).send("Invalid message format.");
 
-            // 🚨 حماية البلوك (للمحادثات الفردية فقط)
             if (!groupId && to) {
                 const receiver = await prisma.user.findUnique({
                     where: { id: to },
                     select: { blockedUsers: true }
                 });
-
-                // لو المستلم عاملك بلوك، رجع 403 (أو 200 بس متحفظش حاجة عشان ميدراش)
                 if (receiver?.blockedUsers?.includes(from)) {
                     return res.status(403).json({ message: "You are blocked by this user." });
                 }
@@ -38,30 +30,24 @@ export const addMessage = async (req, res, next) => {
                     senderId: from,
                     receiverId: to || null,
                     groupId: groupId || null,
-                    messageStatus: "sent", // دايماً sent أول ما تتخزن
+                    messageStatus: "sent", 
                     replyToId: replyTo || null,
                 },
-                include: {
-                    sender: true,
-                    receiver: true,
-                    replyTo: true,
-                    group: true 
-                }
+                include: { sender: true, receiver: true, replyTo: true, group: true }
             });
 
             if (groupId) {
                 global.io.to(groupId).emit("msg-receive", { from, message: newMessage, isGroup: true });
+                // 🚨 التعديل السحري: إرسال الـ trigger اللي بيحرك العداد برة في القائمة لكل الأعضاء!
+                global.io.to(groupId).emit("msg-send-refresh", { triggered: true, newMessage });
             } else {
-                await handleDeliveryStatus(prisma, newMessage, from, to, groupId); // هنا
+                await handleDeliveryStatus(prisma, newMessage, from, to, groupId); 
             }
 
             return res.status(201).json({ message: newMessage });
         }
-
         return res.status(400).send("Message, From, and (To or GroupId) are required.");
-    } catch (err) {
-        next(err);
-    }
+    } catch (err) { next(err); }
 };
 
 export const getMessages = async (req, res, next) => {
@@ -143,7 +129,7 @@ export const addImageMessage = async (req, res, next) => {
         if(req.file) {
             const imageFile = req.file;
             const imageUpload = await cloudinary.uploader.upload(imageFile.path, {resource_type: "image"});
-            try { unlink(imageFile.path); } catch (err) { console.error("Failed to delete local image:", err); }
+            try { unlink(imageFile.path); } catch (err) {}
             
             const prisma = getPrismaInstance();
             const {from, to, groupId} = req.query;
@@ -156,11 +142,15 @@ export const addImageMessage = async (req, res, next) => {
                         ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
                         ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
                         type: "image",
-                        messageStatus: "sent", // دايماً sent الأول
+                        messageStatus: "sent", 
                     }
                 });
 
-                if (!groupId) {
+                if (groupId) {
+                    global.io.to(groupId).emit("msg-receive", { from, message, isGroup: true });
+                    // 🚨 التعديل للصور: السايدبار يتحدث ويظهر إن فيه صورة اتبعتت
+                    global.io.to(groupId).emit("msg-send-refresh", { triggered: true, newMessage: message });
+                } else {
                     await handleDeliveryStatus(prisma, message, from, to, groupId);
                 }
                 return res.status(201).json({ message });
@@ -176,27 +166,21 @@ export const addAudioMessage = async (req, res, next) => {
         if(req.file) {
             const audioFile = req.file;
             const audioUpload = await cloudinary.uploader.upload(audioFile.path, {resource_type: "video"});
-            try { unlink(audioFile.path); } catch (err) { console.error("Failed to delete local audio:", err); }
+            try { unlink(audioFile.path); } catch (err) {}
             
             const prisma = getPrismaInstance();
             const {from, to, groupId} = req.query;
 
-            // 🚨 الإضافة الجديدة: استقبال مصفوفة الأرقام من الـ Body
             let waveformData = [];
             if (req.body.waveform) {
-                try {
-                    // الـ FormData بيبعت البيانات كـ String، فلازم نرجعه لـ Array
-                    waveformData = JSON.parse(req.body.waveform);
-                } catch (e) {
-                    console.error("Failed to parse waveform data:", e);
-                }
+                try { waveformData = JSON.parse(req.body.waveform); } catch (e) {}
             }
 
             if(from && (to || groupId)) {
                 const message = await prisma.messages.create({
                     data: {
                         message: audioUpload.secure_url,
-                        waveform: waveformData, // 🚨 حفظ شكل الموجة هنا!
+                        waveform: waveformData, 
                         sender: {connect: {id: from}}, 
                         ...(to && to !== "undefined" && { receiver: {connect: {id: to}} }),
                         ...(groupId && groupId !== "undefined" && { group: {connect: {id: groupId}} }),
@@ -205,7 +189,11 @@ export const addAudioMessage = async (req, res, next) => {
                     }
                 });
 
-                if (!groupId) {
+                if (groupId) {
+                    global.io.to(groupId).emit("msg-receive", { from, message, isGroup: true });
+                    // 🚨 التعديل للفويسات: السايدبار يتحدث
+                    global.io.to(groupId).emit("msg-send-refresh", { triggered: true, newMessage: message });
+                } else {
                     await handleDeliveryStatus(prisma, message, from, to, groupId);
                 }
 
@@ -222,19 +210,18 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
         const userId = req.params.from;
         const prisma = getPrismaInstance();
 
+        // 1. جلب الرسائل الفردية
+        // ⚠️ نصيحة للمستقبل: لو الرسايل كترت جداً (ملايين)، الـ Query دي هتحتاج Optimization
+        // لأنها بتجيب كل الرسايل. لكن حالياً هتمشي معاك تمام.
         const messages = await prisma.messages.findMany({
             where: {
-                OR: [{ senderId: userId }, { receiverId: userId }], groupId: null,
+                OR: [{ senderId: userId }, { receiverId: userId }], 
+                groupId: null, // رسائل فردية فقط
             },
             orderBy: { createdAt: "desc" },
             select: {
-                id: true,
-                type: true,
-                message: true,
-                messageStatus: true,
-                createdAt: true,
-                senderId: true,
-                receiverId: true,
+                id: true, type: true, message: true, messageStatus: true, createdAt: true,
+                senderId: true, receiverId: true,
                 sender: { select: { id: true, name: true, profilePicture: true, email: true, about: true, lastSeen: true } },
                 receiver: { select: { id: true, name: true, profilePicture: true, email: true, about: true, lastSeen: true } },
             },
@@ -270,11 +257,8 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
             }
         });
 
-        // بعد - صح ✅
         if (messageStatusChange.length) {
-            // بس حول لـ delivered لو المستقبل أونلاين فعلاً
             const onlineMessageIds = [];
-
             for (const msg of messages) {
                 if (messageStatusChange.includes(msg.id)) {
                     const receiverId = msg.senderId === userId ? msg.receiverId : msg.senderId;
@@ -285,18 +269,19 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
             }
 
             if (onlineMessageIds.length > 0) {
-                await prisma.messages.updateMany({
+                // مش محتاجين await هنا عشان منأخرش الرد على الفرونت إند (تحديث في الخلفية)
+                prisma.messages.updateMany({
                     where: { id: { in: onlineMessageIds } },
                     data: { messageStatus: "delivered" },
-                });
+                }).catch(err => console.log("Background status update error:", err));
             }
         }
 
+        // 2. جلب الجروبات
         const userGroups = await prisma.group.findMany({
             where: { userIds: { has: userId } },
             include: {
                 users: { select: { id: true, name: true, profilePicture: true, email: true } },
-                // الإضافة: جلب المفتاح المتشفر الخاص بهذا اليوزر فقط في هذا الجروب
                 encryptedKeys: {
                     where: { userId: userId },
                     select: { encryptedKey: true }
@@ -304,31 +289,58 @@ export const getInitialContactsWithMessages = async (req, res, next) => {
             }
         });
 
-        userGroups.forEach((group) => {
+        // 🚨 التعديل السحري الأول: إطلاق كل استعلامات الجروبات في نفس اللحظة (Parallel Execution)
+        await Promise.all(userGroups.map(async (group) => {
             if (!users.has(group.id)) {
+                
+                // 🚨 التعديل السحري التاني: جلب آخر رسالة والعداد في نفس اللحظة برضه!
+                const [lastMessage, unreadCount] = await Promise.all([
+                    prisma.messages.findFirst({
+                        where: { groupId: group.id },
+                        orderBy: { createdAt: "desc" },
+                        include: { _count: { select: { seenBy: true } } }
+                    }),
+                    prisma.messages.count({
+                        where: {
+                            groupId: group.id,
+                            senderId: { not: userId },
+                            seenBy: { none: { userId: userId } }
+                        }
+                    })
+                ]);
+
                 users.set(group.id, {
                     id: group.id,
                     name: group.name,
                     profilePicture: group.profilePicture || "/default_avatar.png",
                     about: group.about,
                     isGroup: true,
-                    isLocked: group.isLocked, // السطر ده هو اللي هيخلي الحالة تثبت بعد الـ Refresh
+                    isLocked: group.isLocked,
                     users: group.users,
+                    userIds: group.userIds, 
                     adminIds: group.adminIds,
-                    type: "text",
-                    message: "Tap to view group",
-                    messageStatus: "read",
-                    createdAt: group.createdAt,
-                    totalUnreadMessages: 0,
-                    senderId: group.id,
+                    
+                    type: lastMessage ? lastMessage.type : "text",
+                    message: lastMessage ? lastMessage.message : "Tap to view group",
+                    messageStatus: lastMessage ? lastMessage.messageStatus : "read",
+                    createdAt: lastMessage ? lastMessage.createdAt : group.createdAt,
+                    senderId: lastMessage ? lastMessage.senderId : group.id,
+                    
+                    totalUnreadMessages: unreadCount,
                     receiverId: userId,
                     encryptedKey: group.encryptedKeys[0]?.encryptedKey || null,
+                    seenCount: lastMessage?._count?.seenBy || 0,
                 });
             }
+        }));
+
+        // 🚨 خطوة أخيرة: ترتيب كل الـ Contacts (فردي وجروبات) بناءً على أحدث رسالة قبل ما نبعتهم
+        const sortedUsers = Array.from(users.values()).sort((a, b) => {
+            return new Date(b.createdAt) - new Date(a.createdAt);
         });
 
         return res.status(200).json({
-            users: Array.from(users.values()),
+            users: sortedUsers,
             onlineUsers: Array.from(global.onlineUsers.keys()),
         });
     } catch (err) {
