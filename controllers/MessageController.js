@@ -572,3 +572,29 @@ export const deleteChat = async (req, res, next) => {
         next(err);
     }
 };
+
+// --- الدالة الجديدة لجلب ميديا الشات الفردي ---
+// --- الدالة الجديدة لجلب ميديا الشات الفردي (محدثة) ---
+export const getUserMedia = async (req, res, next) => {
+    try {
+        const prisma = getPrismaInstance();
+        const { from, to } = req.params;
+
+        const all = await prisma.messages.findMany({
+            where: {
+                OR: [
+                    { senderId: from, receiverId: to },
+                    { senderId: to, receiverId: from }
+                ],
+                type: "image",
+            },
+        });
+
+        console.log("Total image messages:", all.length);
+        all.forEach(m => console.log("MSG:", m.message.substring(0, 50), "| groupId:", m.groupId));
+
+        return res.status(200).json({ mediaMessages: all });
+    } catch (err) {
+        next(err);
+    }
+};
