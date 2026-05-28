@@ -161,6 +161,7 @@ io.on("connection", (socket) => {
 
     // خلينا الـ function دي async عشان نقدر نكلم الداتا بيز
     socket.on('disconnect', async function(data) {
+        console.log("Client Disconnected");
         for (let [userId, sockId] of onlineUsers.entries()) {
             if (sockId === socket.id) {
                 onlineUsers.delete(userId);
