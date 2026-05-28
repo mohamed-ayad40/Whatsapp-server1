@@ -112,10 +112,5 @@ export function generateToken04(
     Buffer.from(encryptBuf),
   ]);
   var dv = new DataView(Uint8Array.from(buf).buffer); // Create DataView object from binary data
-  // console.log('-----------------');
-  // console.log('-------getBigInt64----------', dv.getBigInt64(0));
-  // console.log('-----------------');
-  // console.log('-------getUint16----------', dv.getUint16(8));
-  // console.log('-----------------');
   return "04" + Buffer.from(dv.buffer).toString("base64"); // Return final token string in Base64 format
 }

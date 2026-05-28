@@ -2,60 +2,49 @@ import getPrismaInstance from "../utils/PrismaClient.js";
 import {generateToken04} from "../utils/TokenGenerator.js";
 
 export const checkUser = async (req, res, next) => {
-    try {
-        const { email } = req.body;
-        if (!email) {
-            return res.json({
-                message: "Email is required.",
-                status: false
-            });
-        }
-
-        const prisma = getPrismaInstance();
-        const user = await prisma.user.findUnique({
-            where: { email },
-            // ضفنا الـ publicKey هنا عشان الـ Context في الفرونت يحفظه
-            select: { id: true, email: true, name: true, profilePicture: true, about: true, publicKey: true }, 
-        });
-
-        if (!user) {
-            return res.json({
-                message: "User not found!",
-                status: false
-            });
-        }
-
-        return res.json({
-            message: "User found",
-            status: true,
-            data: user
-        });
-
-    } catch (err) {
-        next(err);
+  try {
+    const { email, phoneNumber } = req.body;
+    if (!email && !phoneNumber) {
+      return res.json({ message: "Email or phone number is required.", status: false });
     }
+
+    const prisma = getPrismaInstance();
+    const user = await prisma.user.findFirst({
+      where: email ? { email } : { phoneNumber },
+      select: { id: true, email: true, phoneNumber: true, name: true, profilePicture: true, about: true, publicKey: true },
+    });
+
+    if (!user) return res.json({ message: "User not found!", status: false });
+    return res.json({ message: "User found", status: true, data: user });
+  } catch (err) {
+    next(err);
+  }
 };
 
 export const onBoardUser = async (req, res, next) => {
-    try {
-        // استلام الـ publicKey من الـ Request Body
-        const {email, name, about, image: profilePicture, publicKey} = req.body;
-        
-        if(!email || !name || !profilePicture) {
-            return res.send("Email, Name and Image are required.");
-        };
+  try {
+    const { email, phoneNumber, name, about, image: profilePicture, publicKey } = req.body;
 
-        const prisma = getPrismaInstance();
-        const user = await prisma.user.create({
-            // تخزين الـ publicKey في الداتا بيز لأول مرة
-            data: { email, name, about, profilePicture, publicKey },
-        });
+    if ((!email && !phoneNumber) || !name || !profilePicture) {
+      return res.send("Name, Image, and (Email or Phone) are required.");
+    }
 
-        console.log("New User Created with Public Key:", user.id);
-        return res.json({message: "Success", status: true, user});
-    } catch(err) {
-        next(err);
-    };
+    const prisma = getPrismaInstance();
+    const user = await prisma.user.create({
+      data: {
+        ...(email && { email }),
+        ...(phoneNumber && { phoneNumber }),
+        name,
+        about,
+        profilePicture,
+        publicKey,
+      },
+    });
+
+    return res.json({ message: "Success", status: true, user });
+  } catch (err) {
+    next(err);
+  }
 };
 
 export const getAllUsers = async (req, res, next) => {

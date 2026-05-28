@@ -57,7 +57,6 @@ io.on("connection", (socket) => {
     global.chatSocket = socket;
     socket.on("add-user", async (userId) => {
         onlineUsers.set(userId, socket.id);
-        console.log(onlineUsers);
         
         // حدّث الرسايل اللي اتبعتله وهو أوفلاين لـ delivered
         try {

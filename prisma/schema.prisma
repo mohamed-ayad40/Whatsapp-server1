@@ -10,7 +10,8 @@ generator client {
 
 model User {
   id               String      @id @default(auto()) @map("_id") @db.ObjectId
-  email            String      @unique
+  email            String?     @unique  // اتغير لـ optional
+  phoneNumber      String?     @unique  // جديد
   name             String
   profilePicture   String      @default("")
   about            String      @default("")
@@ -18,16 +19,12 @@ model User {
   receivedMessages Messages[]  @relation("receivedMessages")
   lastSeen         DateTime?   @default(now()) 
   groupKeys        GroupKey[]
-  
   groupIds         String[]    @db.ObjectId
   groups           Group[]     @relation(fields: [groupIds], references: [id])
-
-  // --- الحقول الجديدة لفك الـ Relations ---
   seenMessages     MessageSeen[] 
   publicKey        String?
-
-  blockedUsers     String[]    @db.ObjectId // الناس اللي أنا عملتلهم بلوك
-  blockedBy        String[]    @db.ObjectId // الناس اللي عملولي بلوك
+  blockedUsers     String[]    @db.ObjectId
+  blockedBy        String[]    @db.ObjectId
 }
 
 model Group {

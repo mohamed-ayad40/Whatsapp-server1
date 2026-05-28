@@ -590,7 +590,6 @@ export const getUserMedia = async (req, res, next) => {
             },
         });
 
-        console.log("Total image messages:", all.length);
         all.forEach(m => console.log("MSG:", m.message.substring(0, 50), "| groupId:", m.groupId));
 
         return res.status(200).json({ mediaMessages: all });
