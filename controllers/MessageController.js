@@ -505,7 +505,7 @@ export const markGroupMessagesAsSeen = async (req, res, next) => {
     const messages = await prisma.message.findMany({
       where: {
         groupId,
-        senderId: {原型: userId }, // ميسجلش إنه شاف رسايله هو
+        senderId: {not: userId }, // ميسجلش إنه شاف رسايله هو
         seenBy: { none: { userId } }
       },
       select: { id: true, senderId: true }
