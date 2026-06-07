@@ -122,7 +122,7 @@ export const toggleBlockUser = async (req, res, next) => {
         const { userId, targetId } = req.body;
         const prisma = getPrismaInstance();
 
-        // 1. نجيب اليوزر عشان نعرف هو عامله بلوك قبل كده ولا لأ
+        // 1. تشييك سريع: هل هو متسجل في لستة البلوك الحالية؟
         const user = await prisma.user.findUnique({
             where: { id: userId },
             select: { blockedUsers: true }
@@ -130,44 +130,41 @@ export const toggleBlockUser = async (req, res, next) => {
 
         const isAlreadyBlocked = user.blockedUsers.includes(targetId);
 
-        // 2. نحسب المصفوفات الجديدة
-        let updatedBlockedUsers = [];
-        let updateQueryForTarget = {};
-
         if (isAlreadyBlocked) {
-            // فك البلوك (Unblock)
-            updatedBlockedUsers = user.blockedUsers.filter(id => id !== targetId);
-            updateQueryForTarget = {
-                blockedBy: { set: (await prisma.user.findUnique({ where: { id: targetId } })).blockedBy.filter(id => id !== userId) }
-            };
+            // فك البلوك بـ طلقة O(1) باستخدام أوامر الداتا بيز مباشرة
+            await prisma.user.update({
+                where: { id: userId },
+                data: { blockedUsers: { pull: targetId } } // 👈 طير التارجت من لستتي
+            });
+            await prisma.user.update({
+                where: { id: targetId },
+                data: { blockedBy: { pull: userId } } // 👈 طيرني من لستة الـ blockedBy بتاعته
+            });
         } else {
-            // عمل بلوك (Block)
-            updatedBlockedUsers = [...user.blockedUsers, targetId];
-            updateQueryForTarget = {
-                blockedBy: { push: userId }
-            };
+            // عمل بلوك
+            await prisma.user.update({
+                where: { id: userId },
+                data: { blockedUsers: { push: targetId } } // 👈 ضيف التارجت للستتي
+            });
+            await prisma.user.update({
+                where: { id: targetId },
+                data: { blockedBy: { push: userId } } // 👈 ضيفني للستة بتاعته
+            });
         }
 
-        // 3. ننفذ التحديثين في وقت واحد
-        await prisma.user.update({
+        // نجيب اللستة المحدثة عشان نرجعها للفرونت إند يطرد الشات فوراً
+        const updatedUser = await prisma.user.findUnique({
             where: { id: userId },
-            data: { blockedUsers: { set: updatedBlockedUsers } }
-        });
-
-        await prisma.user.update({
-            where: { id: targetId },
-            data: updateQueryForTarget
+            select: { blockedUsers: true }
         });
 
         return res.status(200).json({ 
             status: true, 
             message: isAlreadyBlocked ? "User unblocked" : "User blocked",
-            blockedUsers: updatedBlockedUsers // بنرجع الـ Array الجديدة عشان الفرونت
+            blockedUsers: updatedUser.blockedUsers
         });
 
-    } catch (err) {
-        next(err);
-    }
+    } catch (err) { next(err); }
 };
 
 export const updateUser = async (req, res, next) => {
