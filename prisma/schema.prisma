@@ -22,7 +22,11 @@ model User {
   groupIds         String[]    @db.ObjectId
   groups           Group[]     @relation(fields: [groupIds], references: [id])
   seenMessages     MessageSeen[] 
-  publicKey        String?
+  
+  // 🚨 مفاتيح التشفير 🚨
+  publicKey        String?     // 👈 مفتاح RSA للجروبات
+  ecdhPublicKey    String?     // 👈 مفتاح ECDH للشات الفردي (الإضافة الجديدة)
+  
   blockedUsers     String[]    @db.ObjectId
   blockedBy        String[]    @db.ObjectId
 }
@@ -56,7 +60,7 @@ model Messages {
 
   type          String      @default("text")
   message       String      
-  waveform      Float[]     // 🚨 الإضافة الجديدة: مصفوفة أرقام الموجة الصوتية (Pre-computed Peaks)
+  waveform      Float[]     // مصفوفة أرقام الموجة الصوتية
   messageStatus String      @default("sent")
   createdAt     DateTime    @default(now())
 

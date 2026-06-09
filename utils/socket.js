@@ -1,5 +1,5 @@
 import { Server } from "socket.io";
-import getPrismaInstance from "./utils/PrismaClient.js";
+import getPrismaInstance from "./PrismaClient.js";
 
 export const initSocket = (server) => {
     const io = new Server(server, {

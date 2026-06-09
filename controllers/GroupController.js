@@ -3,7 +3,6 @@ import getPrismaInstance from "../utils/PrismaClient.js";
 export const createGroup = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
-        // التعديل: استلام members (userId + encryptedKey) بدل users بس
         const { groupName, groupAbout, members, adminId } = req.body;
 
         if (!groupName || !members || members.length === 0 || !adminId) {
@@ -14,44 +13,17 @@ export const createGroup = async (req, res, next) => {
         const userIds = members.map(m => m.userId);
         const allUserIds = [...new Set([...userIds, adminId])];
 
-        // تنفيذ العملية في Transaction
-        const [newGroup] = await prisma.$transaction([
-            // 1. إنشاء الجروب
-            prisma.group.create({
-                data: {
-                    name: groupName,
-                    about: groupAbout || "Hey there! I am using WhatsApp.",
-                    adminIds: [adminId],
-                    userIds: allUserIds,
-                },
-                include: {
-                    users: {
-                        select: { id: true, name: true, profilePicture: true, email: true }
-                    }
-                }
-            }),
-            // 2. إنشاء مفاتيح التشفير لكل الأعضاء (بما فيهم الأدمن لو بعت مفتاحه)
-            prisma.groupKey.createMany({
-                data: members.map(m => ({
-                    groupId: "", // Prisma هتربطها أوتوماتيكياً في الـ Transaction لو استخدمنا connect، بس هنا أسرع نحدثها يدوياً أو نستخدم الـ ID اللي هيرجع
-                    userId: m.userId,
-                    encryptedKey: m.encryptedKey
-                }))
-            })
-        ]);
-
-        // ملاحظة تقنية: في MongoDB مع Prisma الـ Transaction لـ createMany محتاج الـ groupId
-        // فإحنا هنعدل الـ Logic ليكون أكتر استقراراً كالتالي:
-        
+        // 1. إنشاء الجروب (استخدام description بدل about)
         const createdGroup = await prisma.group.create({
             data: {
                 name: groupName,
-                about: groupAbout || "Hey there! I am using WhatsApp.",
+                description: groupAbout || "Hey there! I am using WhatsApp.", // 👈 التعديل هنا
                 adminIds: [adminId],
                 userIds: allUserIds,
             }
         });
 
+        // 2. إنشاء مفاتيح التشفير لكل الأعضاء وربطها بالجروب الجديد
         await prisma.groupKey.createMany({
             data: members.map(m => ({
                 groupId: createdGroup.id,
@@ -60,9 +32,14 @@ export const createGroup = async (req, res, next) => {
             }))
         });
 
+        // 3. جلب الجروب بشكله النهائي مع بيانات الأعضاء عشان نرجعه للفرونت إند
         const finalGroup = await prisma.group.findUnique({
             where: { id: createdGroup.id },
-            include: { users: { select: { id: true, name: true, profilePicture: true, email: true } } }
+            include: { 
+                users: { 
+                    select: { id: true, name: true, profilePicture: true, email: true } 
+                } 
+            }
         });
 
         // إرسال الإشعارات بالسوكيت
@@ -141,25 +118,55 @@ export const toggleAdminRole = async (req, res, next) => {
 export const removeMember = async (req, res, next) => {
     try {
         const prisma = getPrismaInstance();
-        const { groupId, targetUserId } = req.body;
+        // 1. استلمنا حاجة جديدة: newMembersKeys (المفاتيح الجديدة للأعضاء اللي مكملين)
+        const { groupId, targetUserId, newMembersKeys } = req.body;
         const adminId = req.user.id;
 
         const group = await prisma.group.findUnique({ where: { id: groupId } });
         if (!group.adminIds.includes(adminId)) return res.status(403).send("Admin privilege required.");
         if (targetUserId === adminId) return res.status(400).send("You cannot remove yourself.");
 
-        const updatedGroup = await prisma.group.update({
-            where: { id: groupId },
-            data: { 
-                userIds: { set: group.userIds.filter(id => id !== targetUserId) },
-                adminIds: { set: group.adminIds.filter(id => id !== targetUserId) }
-            },
-            include: { users: true }
-        });
+        if (!newMembersKeys || newMembersKeys.length === 0) {
+            return res.status(400).send("Security Error: Key rotation requires new encrypted keys for remaining members.");
+        }
 
+        // 2. تحديث الجروب وتغيير الكالون في Transaction واحد لضمان الأمان
+        const [updatedGroup] = await prisma.$transaction([
+            // أ. مسح العضو المطرود من الجروب
+            prisma.group.update({
+                where: { id: groupId },
+                data: { 
+                    userIds: { set: group.userIds.filter(id => id !== targetUserId) },
+                    adminIds: { set: group.adminIds.filter(id => id !== targetUserId) }
+                },
+                include: { users: true }
+            }),
+            
+            // ب. مسح كل المفاتيح القديمة بتاعة الجروب ده (الكالون القديم اترمي)
+            prisma.groupKey.deleteMany({
+                where: { groupId: groupId }
+            }),
+            
+            // ج. زرع المفاتيح الجديدة (الكالون الجديد) للأعضاء المتبقين فقط
+            prisma.groupKey.createMany({
+                data: newMembersKeys.map(m => ({
+                    groupId: groupId,
+                    userId: m.userId,
+                    encryptedKey: m.encryptedKey
+                }))
+            })
+        ]);
+
+        // 3. تبليغ الفرونت إند إن فيه عضو اتشال والكالون اتغير!
         global.io.to(groupId).emit("group-metadata-updated", updatedGroup);
+        
+        // 🚨 إيفينت جديد جداً: عشان التليفونات اللي فاتحة تعمل Fetch للمفتاح الجديد وتفك شفرته
+        global.io.to(groupId).emit("group-key-rotated", { groupId: groupId });
+
         return res.status(200).json({ group: updatedGroup });
-    } catch (err) { next(err); }
+    } catch (err) { 
+        next(err); 
+    }
 };
 
 export const addGroupMembers = async (req, res, next) => {

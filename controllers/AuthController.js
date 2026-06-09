@@ -11,7 +11,8 @@ export const checkUser = async (req, res, next) => {
     const prisma = getPrismaInstance();
     const user = await prisma.user.findFirst({
       where: email ? { email } : { phoneNumber },
-      select: { id: true, email: true, phoneNumber: true, name: true, profilePicture: true, about: true, publicKey: true },
+      // 🚨 التعديل: ضفنا ecdhPublicKey في الـ select عشان يرجع للفرونت إند
+      select: { id: true, email: true, phoneNumber: true, name: true, profilePicture: true, about: true, publicKey: true, ecdhPublicKey: true },
     });
 
     if (!user) return res.json({ message: "User not found!", status: false });
@@ -23,7 +24,8 @@ export const checkUser = async (req, res, next) => {
 
 export const onBoardUser = async (req, res, next) => {
   try {
-    const { email, phoneNumber, name, about, image: profilePicture, publicKey } = req.body;
+    // 🚨 التعديل: بنستقبل ecdhPublicKey من الـ req.body
+    const { email, phoneNumber, name, about, image: profilePicture, publicKey, ecdhPublicKey } = req.body;
 
     if ((!email && !phoneNumber) || !name || !profilePicture) {
       return res.send("Name, Image, and (Email or Phone) are required.");
@@ -37,7 +39,8 @@ export const onBoardUser = async (req, res, next) => {
         name,
         about,
         profilePicture,
-        publicKey,
+        publicKey, // مفتاح الجروبات
+        ecdhPublicKey, // مفتاح الشات الفردي
       },
     });
 
@@ -53,9 +56,8 @@ export const getAllUsers = async (req, res, next) => {
 
         const users = await prisma.user.findMany({
             orderBy: { name: "asc" },
-            // مهم جداً نبعت الـ publicKey في لستة الـ Contacts 
-            // عشان لما تحب تبدأ شات متشفر مع حد، تلاقي مفتاحه جاهز
-            select: { id: true, email: true, name: true, profilePicture: true, about: true, publicKey: true },
+            // 🚨 التعديل: ضفنا ecdhPublicKey عشان لما تجيب الكونتاكت تلاقي مفتاحه
+            select: { id: true, email: true, name: true, profilePicture: true, about: true, publicKey: true, ecdhPublicKey: true },
         });
 
         const usersGroupedByInitialLetter = users.reduce((acc, user) => {
@@ -185,4 +187,21 @@ export const updateUser = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+};
+export const updatePublicKey = async (req, res, next) => {
+    try {
+        // 🚨 التعديل: بنستقبل ecdhPublicKey مع الـ publicKey
+        const { id, publicKey, ecdhPublicKey } = req.body;
+        const prisma = getPrismaInstance();
+        
+        const updatedUser = await prisma.user.update({
+            where: { id },
+            data: { 
+                publicKey: publicKey,
+                ecdhPublicKey: ecdhPublicKey 
+            }
+        });
+        
+        return res.status(200).json({ status: true, user: updatedUser });
+    } catch (err) { next(err); }
 };

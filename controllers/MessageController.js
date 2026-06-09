@@ -502,7 +502,7 @@ export const markGroupMessagesAsSeen = async (req, res, next) => {
     const prisma = getPrismaInstance();
 
     // 1. هات كل الرسايل في الجروب ده اللي اليوزر ده لسه مشافهاش
-    const messages = await prisma.message.findMany({
+    const messages = await prisma.messages.findMany({
       where: {
         groupId,
         senderId: {not: userId }, // ميسجلش إنه شاف رسايله هو

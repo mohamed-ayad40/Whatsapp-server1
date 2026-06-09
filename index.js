@@ -6,7 +6,7 @@ import MessageRoute from "./routes/MessageRoutes.js";
 import GroupRoutes from "./routes/GroupRoutes.js";
 import connectCloudinary from "./config/cloudinary.js";
 import helmet from "helmet";
-import { initSocket } from "./socket.js"; // 👈 استيراد ملف السوكيت المنفصل
+import { initSocket } from "./utils/socket.js"; // 👈 استيراد ملف السوكيت المنفصل
 
 dotenv.config();
 const app = express();
